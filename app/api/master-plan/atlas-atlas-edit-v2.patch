@@ -1,0 +1,501 @@
+--- app/api/render/route.ts.bak	2026-08-21 15:52:17.741317886 +0000
++++ app/api/render/route.ts	2026-08-21 15:54:19.856629866 +0000
+@@ -4,6 +4,7 @@
+ import os from "os";
+ import { execFile } from "child_process";
+ import { promisify } from "util";
++import crypto from "crypto";
+ 
+ const execFileAsync = promisify(execFile);
+ export const runtime = "nodejs";
+@@ -138,25 +139,99 @@
+   return `drawtext=fontfile='${ffPath(font)}':textfile='${ffPath(file)}':reload=0:fontcolor=white:fontsize=${size}:borderw=${border}:bordercolor=black@0.78:x=(w-text_w)/2:y=${y}:enable='between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})'`;
+ }
+ 
+-function animatedTextFilter(font: string, file: string, size: number, start: number, end: number, style = '', animation = '', position = 'BOTTOM') {
+-  const a = String(animation || '').toUpperCase();
+-  const st = String(style || '').toUpperCase();
+-  const pos = String(position || 'BOTTOM').toUpperCase();
+-  const topY = pos === 'TOP' ? 'h*0.14' : pos === 'CENTER' ? '(h-text_h)/2' : 'h*0.76';
+-  const color = st.includes('PRICE') || st.includes('ACCENT') ? '0xB6FF00' : 'white';
+-  const border = st.includes('OUTLINE') ? 8 : 5;
++function animatedTextFilter(
++  font: string,
++  file: string,
++  size: number,
++  start: number,
++  end: number,
++  style = "CLEAN",
++  animation = "FADE_UP",
++  position = "LOWER"
++) {
++  const a = String(animation || "FADE_UP").toUpperCase();
++  const st = String(style || "CLEAN").toUpperCase();
++  const pos = String(position || "LOWER").toUpperCase();
++
++  const isPrice = st.includes("PRICE") || st.includes("ACCENT");
++  const isMinimal = st.includes("MINIMAL");
++  const isBoxed = st.includes("BOX") || st.includes("CTA");
++  const isSmall = st.includes("SMALL") || st.includes("LABEL");
++  const color = isPrice ? "0xB6FF00" : "white";
++  const border = st.includes("OUTLINE") ? 8 : 4;
++  const weight = isSmall ? Math.max(42, size - 24) : isMinimal ? Math.max(48, size - 12) : size;
++
++  const centerY = pos === "TOP" || pos === "SAFE_TOP"
++    ? "h*0.14"
++    : pos === "CENTER"
++      ? "(h-text_h)/2"
++      : "h*0.78";
++
++  const safeX = "(w-text_w)/2";
+   const local = `(t-${start.toFixed(3)})`;
+-  const progress = `min(1\,max(0\,${local}/0.18))`;
+-  let x = '(w-text_w)/2';
+-  let y = topY;
+-  let alpha = '1';
+-  if (a.includes('SLIDE_UP')) y = `(${topY})+70*(1-${progress})`;
+-  else if (a.includes('SLIDE_LEFT')) x = `((w-text_w)/2)-110*(1-${progress})`;
+-  else if (a.includes('SLIDE_RIGHT')) x = `((w-text_w)/2)+110*(1-${progress})`;
+-  else if (a.includes('POP')) alpha = progress;
+-  else if (a.includes('FADE')) alpha = progress;
+-  const weight = st.includes('MINIMAL') ? Math.max(52, size - 12) : size;
+-  return `drawtext=fontfile='${ffPath(font)}':textfile='${ffPath(file)}':reload=0:fontcolor=${color}:fontsize=${weight}:borderw=${border}:bordercolor=black@0.78:x='${x}':y='${y}':alpha='${alpha}':enable='between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})'`;
++  const progress = `min(1\,max(0\,${local}/0.22))`;
++  let x = safeX;
++  let y = centerY;
++  let alpha = "1";
++
++  if (a.includes("SLIDE_UP") || a.includes("FADE_UP")) y = `(${centerY})+70*(1-${progress})`;
++  else if (a.includes("SLIDE_LEFT")) x = `(${safeX})-120*(1-${progress})`;
++  else if (a.includes("SLIDE_RIGHT")) x = `(${safeX})+120*(1-${progress})`;
++  else if (a.includes("POP")) alpha = `0.82+0.18*${progress}`;
++  else if (a.includes("FADE")) alpha = progress;
++
++  const box = isBoxed
++    ? ":box=1:boxcolor=black@0.58:boxborderw=18"
++    : "";
++
++  return `drawtext=fontfile='${ffPath(font)}':textfile='${ffPath(file)}':reload=0:fontcolor=${color}:fontsize=${weight}:borderw=${border}:bordercolor=black@0.72:x='${x}':y='${y}':alpha='${alpha}':enable='between(t\\,${start.toFixed(3)}\\,${end.toFixed(3)})'${box}`;
++}
++
++function motionFilter(shot: Shot, index: number, duration: number) {
++  const zoom = clamp(Number(shot.zoom) || 1, 1, 1.22);
++  const treatment = String(shot.visual_treatment || "").toLowerCase();
++  const action = String(shot.visual_action || "").toLowerCase();
++  const requested = `${String((shot as any).motion || "")} ${treatment} ${action}`.toLowerCase();
++  const plannedSpeed = Number(shot.speed);
++
++  const direction = index % 2 === 0 ? 1 : -1;
++  const scale = Math.max(1.02, zoom + (shot.role === "HOOK" ? 0.08 : shot.role === "CTA" ? 0.045 : 0.025));
++  const w = Math.round(1080 * scale);
++  const h = Math.round(1920 * scale);
++  const travel = shot.role === "HOOK" ? 0.12 : shot.role === "CTA" ? 0.07 : 0.055;
++  const t = `min(1\,max(0\,t/${Math.max(0.25, duration).toFixed(3)}))`;
++
++  let x = `(iw-1080)/2`;
++  let y = `(ih-1920)/2`;
++
++  if (requested.includes("pan-left")) x = `(iw-1080)*(0.62-${travel}*${t})`;
++  else if (requested.includes("pan-right")) x = `(iw-1080)*(0.38+${travel}*${t})`;
++  else if (requested.includes("tilt-up")) y = `(ih-1920)*(0.62-${travel * 0.7}*${t})`;
++  else if (requested.includes("tilt-down")) y = `(ih-1920)*(0.38+${travel * 0.7}*${t})`;
++  else if (requested.includes("pull-out")) {
++    const p = `(1-${0.07}*${t})`;
++    x = `(iw-1080)*${p}/2`;
++    y = `(ih-1920)*${p}/2`;
++  } else if (requested.includes("push-in") || requested.includes("zoom")) {
++    const p = `(0.5+${0.07 * direction}*${t})`;
++    x = `(iw-1080)*${p}`;
++    y = `(ih-1920)*(0.5+0.018*sin(2*PI*t/3.1))`;
++  } else if (requested.includes("handheld") || requested.includes("micro")) {
++    x = `(iw-1080)*(0.5+0.012*sin(2*PI*t/0.47))`;
++    y = `(ih-1920)*(0.5+0.010*cos(2*PI*t/0.61))`;
++  }
++
++  const filters = [
++    `scale=${w}:${h}:force_original_aspect_ratio=increase`,
++    `crop=1080:1920:x='${x}':y='${y}'`,
++    "fps=30",
++  ];
++
++  if (Number.isFinite(plannedSpeed) && plannedSpeed > 0.5 && plannedSpeed < 1.8 && Math.abs(plannedSpeed - 1) > 0.01) {
++    filters.push(`setpts=${(1 / plannedSpeed).toFixed(3)}*PTS`);
++  }
++
++  return filters;
+ }
+ 
+ function treatmentFilters(treatment: string, role: Role) {
+@@ -184,69 +259,6 @@
+   return parts;
+ }
+ 
+-function motionFilter(shot: Shot, index: number, duration: number) {
+-  const zoom = clamp(Number(shot.zoom) || 1, 1, 1.22);
+-  const treatment = String(shot.visual_treatment || "").toLowerCase();
+-  const action = String(shot.visual_action || "").toLowerCase();
+-
+-  const wantsPullOut =
+-    treatment.includes("pull out") ||
+-    treatment.includes("pull-out") ||
+-    action.includes("pull out");
+-
+-  const wantsFast =
+-    treatment.includes("speed") ||
+-    treatment.includes("fast") ||
+-    action.includes("speed");
+-
+-  const wantsSlow =
+-    treatment.includes("slow") ||
+-    action.includes("slow") || Number(shot.speed) < 0.95;
+-
+-  const plannedSpeed = Number(shot.speed);
+-
+-  const base =
+-    shot.role === "HOOK" ? 1.10 :
+-    shot.role === "CTA" ? 1.07 :
+-    shot.role === "PAYOFF" ? 1.08 :
+-    1.035;
+-
+-  const scale = Math.max(1.0, zoom * base);
+-  const w = Math.round(1080 * scale);
+-  const h = Math.round(1920 * scale);
+-
+-  const direction = index % 2 === 0 ? 1 : -1;
+-  const drift =
+-    shot.role === "HOOK" ? 0.095 :
+-    shot.role === "CTA" ? 0.065 :
+-    shot.role === "PAYOFF" ? 0.075 :
+-    0.045;
+-
+-  const period =
+-    shot.role === "HOOK" ? 2.2 :
+-    shot.role === "CTA" ? 2.8 :
+-    3.6;
+-
+-  const progress = wantsPullOut
+-    ? `(1-${drift}*sin(2*PI*t/${period}))`
+-    : `(0.5+${direction * drift}*sin(2*PI*t/${period}))`;
+-
+-  const x = `(iw-1080)*${progress}`;
+-  const y = "(ih-1920)*(0.5+0.018*sin(2*PI*t/3.1))";
+-
+-  const filters = [
+-    `scale=${w}:${h}:force_original_aspect_ratio=increase`,
+-    `crop=1080:1920:x='${x}':y='${y}'`,
+-    "fps=30",
+-  ];
+-
+-  if (Number.isFinite(plannedSpeed) && plannedSpeed > 0.5 && plannedSpeed < 1.8) filters.push(`setpts=${(1 / plannedSpeed).toFixed(3)}*PTS`);
+-  else if (wantsFast) filters.push("setpts=0.88*PTS");
+-  else if (wantsSlow) filters.push("setpts=1.08*PTS");
+-
+-  return filters;
+-}
+-
+ function makeCaptionChunks(
+   captions: Caption[],
+   shot: Shot,
+@@ -679,18 +691,18 @@
+           "utf8"
+         );
+ 
++        const emphasis = (shot.caption_emphasis || []).map(x => x.toLowerCase());
++        const isEmphasis = emphasis.some(x => item.text.toLowerCase().includes(x));
+         filters.push(
+-          textFileFilter(
++          animatedTextFilter(
+             font,
+             captionPath,
+-            76,
+-            "h*0.76",
++            isEmphasis ? 84 : 70,
+             item.start,
+-            Math.max(
+-              item.end,
+-              item.start + 0.08
+-            ),
+-            5
++            Math.max(item.end, item.start + 0.08),
++            isEmphasis ? "WORD_EMPHASIS BOX" : "CLEAN",
++            shot.caption_mode === "WORD_BY_WORD" ? "WORD_POP" : "FADE_UP",
++            "LOWER"
+           )
+         );
+       }
+@@ -912,18 +924,21 @@
+     if (musicPath) {
+       audioInputs.push("-stream_loop", "-1", "-i", musicPath);
+       const musicInputIndex = nextInput;
++      const globalAudio = masterPlan?.global_audio || {};
++      const plannedIntensity = clamp(Number(globalAudio.music_intensity) || 0.72, 0.15, 1);
++      const baseMusicVolume = voicePath ? 0.24 : 0.42;
+ 
+       filterParts.push(
+-        `[${musicInputIndex}:a]aresample=44100,volume=0.20,atrim=0:${targetDuration.toFixed(3)},afade=t=in:st=0:d=0.25,afade=t=out:st=${Math.max(0, targetDuration - 0.45).toFixed(3)}:d=0.45[musicRaw]`
++        `[${musicInputIndex}:a]aresample=44100,volume=${(baseMusicVolume * plannedIntensity).toFixed(3)},atrim=0:${targetDuration.toFixed(3)},afade=t=in:st=0:d=0.25,afade=t=out:st=${Math.max(0, targetDuration - 0.45).toFixed(3)}:d=0.45[musicRaw]`
+       );
+ 
+-      if (voicePath) {
++      if (voicePath && globalAudio.duck_music_under_speech !== false) {
+         filterParts.push(
+-          `[musicRaw]volume=0.32[music]`
++          `[musicRaw][voice]sidechaincompress=threshold=0.035:ratio=8:attack=12:release=220:makeup=1[music]`
+         );
+-        console.log("ATLAS AUDIO: using safe voice-first music duck (sidechaincompressor unavailable in this FFmpeg build)");
++        console.log("ATLAS AUDIO: real voice-driven music duck enabled");
+       } else {
+-        filterParts.push("[musicRaw]volume=1.0[music]");
++        filterParts.push("[musicRaw]anull[music]");
+       }
+ 
+       audioLabels.push("[music]");
+@@ -949,13 +964,18 @@
+     sfxSpecs.forEach((fx, i) => {
+       const label = `[sfx${i}]`;
+       const delay = Math.round(fx.at * 1000);
+-      filterParts.push(`sine=frequency=${fx.freq}:duration=${fx.dur},afade=t=out:st=${Math.max(0.03, fx.dur - 0.05).toFixed(3)}:d=0.05,volume=${fx.gain},adelay=${delay}|${delay}${label}`);
++      const tone = fx.name.includes("WHOOSH") || fx.name.includes("SWISH")
++        ? `sine=frequency=${fx.freq}:duration=${fx.dur},highpass=f=350,lowpass=f=4200`
++        : fx.name.includes("SIZZLE")
++          ? `anoisesrc=color=white:amplitude=0.12:duration=${fx.dur},highpass=f=1800,lowpass=f=9000`
++          : `sine=frequency=${fx.freq}:duration=${fx.dur}`;
++      filterParts.push(`${tone},afade=t=out:st=${Math.max(0.03, fx.dur - 0.05).toFixed(3)}:d=0.05,volume=${fx.gain},adelay=${delay}|${delay}${label}`);
+       audioLabels.push(label);
+     });
+ 
+     if (audioLabels.length) {
+       filterParts.push(
+-        `${audioLabels.join("")}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0,alimiter=limit=0.95[aout]`
++        `${audioLabels.join("")}amix=inputs=${audioLabels.length}:duration=longest:dropout_transition=0,loudnorm=I=${Number(masterPlan?.global_audio?.target_lufs || -14).toFixed(1)}:TP=-1.5:LRA=11,alimiter=limit=0.95[aout]`
+       );
+     }
+ 
+--- app/api/master-plan/route.ts.bak	2026-08-21 15:52:17.743111391 +0000
++++ app/api/master-plan/route.ts	2026-08-21 15:52:37.817531511 +0000
+@@ -57,6 +57,10 @@
+   caption_emphasis: string[];
+   music_intensity: number;
+   voice_priority: number;
++  text_style: string;
++  text_animation: string;
++  text_position: string;
++  sfx: string[];
+ };
+ 
+ const apiKey = process.env.OPENAI_API_KEY;
+@@ -242,6 +246,10 @@
+           caption_emphasis: { type: "array", items: { type: "string" } },
+           music_intensity: { type: "number" },
+           voice_priority: { type: "number" },
++          text_style: { type: "string" },
++          text_animation: { type: "string" },
++          text_position: { type: "string" },
++          sfx: { type: "array", items: { type: "string" } },
+         },
+         required: [
+           "id",
+@@ -266,6 +274,10 @@
+           "caption_emphasis",
+           "music_intensity",
+           "voice_priority",
++          "text_style",
++          "text_animation",
++          "text_position",
++          "sfx",
+         ],
+       },
+     },
+@@ -395,6 +407,10 @@
+       : [],
+     music_intensity: clamp(Number(shot.music_intensity) || 0, 0, 1),
+     voice_priority: clamp(Number(shot.voice_priority) || 1, 0, 1),
++    text_style: String(shot.text_style || (shot.role === "HOOK" ? "HOOK_BOLD" : shot.role === "CTA" ? "CTA_BOLD" : "CLEAN")).trim(),
++    text_animation: String(shot.text_animation || (shot.role === "HOOK" ? "POP" : shot.role === "CTA" ? "FADE_UP" : "WORD_POP")).trim(),
++    text_position: String(shot.text_position || (shot.role === "CTA" ? "CENTER" : "LOWER")).trim(),
++    sfx: Array.isArray(shot.sfx) ? shot.sfx.map((x: any) => String(x).trim()).filter(Boolean).slice(0, 3) : [],
+   };
+ }
+ 
+@@ -667,6 +683,12 @@
+ - Timestamps must stay inside source duration.
+ - Zoom must stay between 1.0 and 1.18.
+ - Use a concrete motion value such as "push-in", "pull-out", "pan-left", "pan-right", or "static" and keep speed between 0.94 and 1.06.
++- For every beat choose a deliberate text treatment when text is useful: text_style examples are "HOOK_BOLD", "PRICE_ACCENT", "WORD_EMPHASIS", "MINIMAL", "CTA_BOLD", "CLEAN"; text_animation examples are "POP", "WORD_POP", "SLIDE_UP", "SLIDE_LEFT", "SLIDE_RIGHT", "FADE_UP", "NONE"; text_position examples are "TOP", "CENTER", "LOWER", "SAFE_TOP", "SAFE_LOWER".
++- Do not add on-screen text to every beat by default. Use text when it clarifies the hook, value, offer, feature or CTA.
++- SFX should be intentional and sparse. Use labels such as "WHOOSH", "HIT", "CLICK", "CRUNCH", "SIZZLE", "RISER"; normally 0–2 per beat.
++- Motion, typography and SFX must vary with the editing style. Never apply the same animation, motion and SFX pattern to every shot.
++- Prefer motivated transitions: action-to-action cuts, match cuts for matching movement/shape, whip only for genuine energy shifts, dissolve only for time/emotional changes.
++- Prefer cuts that land on a visual action or spoken emphasis. Treat the first 1.5 seconds as the highest-priority retention zone.
+ - Prefer CUT; other transitions need a reason. Use MATCH only when an action or shape clearly carries across the cut. Use WHIP sparingly.
+ - Avoid two consecutive shots with the same composition, motion direction, and visual treatment.
+ - speech_segment_ids may reference ONLY supplied transcript IDs.
+--- app/api/review-render/route.ts.bak	2026-08-21 15:52:17.744443134 +0000
++++ app/api/review-render/route.ts	2026-08-21 15:53:41.793513409 +0000
+@@ -90,6 +90,35 @@
+   throw new Error("ffmpeg executable was not found.");
+ }
+ 
++async function mediaDuration(ffmpegPath: string, file: string) {
++  const candidates = [
++    path.join(path.dirname(ffmpegPath), "ffprobe.exe"),
++    "C:\\Users\\EPIVATIKOS\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg.Essentials_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.1.1-essentials_build\\bin\\ffprobe.exe",
++  ];
++  for (const binary of candidates) {
++    try {
++      await fs.access(binary);
++      const { stdout } = await execFileAsync(
++        binary,
++        ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file],
++        { windowsHide: true, maxBuffer: 1024 * 1024 }
++      );
++      const value = Number.parseFloat(stdout.trim());
++      if (Number.isFinite(value) && value > 0) return value;
++    } catch {}
++  }
++  try {
++    const { stdout } = await execFileAsync("where.exe", ["ffprobe"], { windowsHide: true, maxBuffer: 1024 * 1024 });
++    const binary = stdout.split(/\r?\n/).map((x) => x.trim()).find(Boolean);
++    if (binary) {
++      const { stdout: durationText } = await execFileAsync(binary, ["-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", file], { windowsHide: true, maxBuffer: 1024 * 1024 });
++      const value = Number.parseFloat(durationText.trim());
++      if (Number.isFinite(value) && value > 0) return value;
++    }
++  } catch {}
++  return 0;
++}
++
+ async function reviewRender(content: any[]) {
+   if (!openai || !apiKey) throw new Error("OPENAI_API_KEY is missing.");
+ 
+@@ -153,9 +182,9 @@
+         [
+           "-y",
+           "-i", videoPath,
+-          "-vf", "fps=1,scale=540:-2:flags=lanczos",
++          "-vf", "fps=2,scale=540:-2:flags=lanczos",
+           "-q:v", "4",
+-          "-frames:v", "18",
++          "-frames:v", "30",
+           pattern,
+         ],
+         { windowsHide: true, maxBuffer: 8 * 1024 * 1024 }
+@@ -176,12 +205,13 @@
+       let plannedDuration = 0;
+       try {
+         const parsedPlan = JSON.parse(plan);
+-        plannedDuration = Number(parsedPlan?.total_duration_seconds) || 0;
++        plannedDuration = Number(parsedPlan?.total_duration_seconds || parsedPlan?.target_duration_seconds) || 0;
+       } catch {}
+ 
+-      const duration = plannedDuration > 0
+-        ? plannedDuration
+-        : Math.max(0, frameFiles.length - 1);
++      const actualDuration = await mediaDuration(ffmpeg, videoPath);
++      const duration = actualDuration > 0
++        ? actualDuration
++        : (plannedDuration > 0 ? plannedDuration : Math.max(0, frameFiles.length / 2));
+ 
+       console.log(`ATLAS REVIEW EXTRACTED ${frameFiles.length} frames (~${duration.toFixed(2)}s review timeline)`);
+ 
+@@ -210,8 +240,13 @@
+ 8) Offer/CTA is instantly understood when relevant.
+ 9) Audio/voice timing should feel commercially intentional.
+ 10) No watermarks or invented claims.
++11) Typography must feel intentionally designed: hierarchy, safe margins, animation timing and emphasis; not plain static labels.
++12) Motion must feel motivated by the shot; avoid identical Ken-Burns movement on every clip.
++13) Transitions must support action/meaning; decorative transition spam is a defect.
++14) Audio should feel layered and controlled when audio is present: voice clarity, music support, SFX restraint and sensible ducking.
++15) Color and exposure should be consistent across the cut.
+ 
+-PASS ONLY if >=92/100, no HIGH issues, and no obvious pacing, text or visual mismatch.
++PASS ONLY if >=92/100, no HIGH issues, and no obvious pacing, text, audio or visual mismatch.
+ 
+ You are a quality-control editor, NOT an aggressive re-editor. Preserve the creative structure when it is already coherent.
+ - Keep the final visual duration within 90–100% of the requested target duration. For a 15s target, the acceptable band is 13.5–15.0s. NEVER redesign a coherent 15s commercial into 6–9s merely to improve pacing.
+--- app/reel/page.tsx.bak	2026-08-21 15:52:17.745799630 +0000
++++ app/reel/page.tsx	2026-08-21 15:53:26.439250759 +0000
+@@ -156,6 +156,10 @@
+   caption_emphasis: string[];
+   music_intensity: number;
+   voice_priority: number;
++  text_style?: string;
++  text_animation?: string;
++  text_position?: string;
++  sfx?: string[];
+ };
+ 
+ type FootageMatch = {
+@@ -916,6 +920,7 @@
+     let activePlan = masterPlan;
+     let best = initial;
+     let bestScore = -1;
++    let bestRank = -1;
+     let bestReview: any = null;
+ 
+     setIsSelfEditing(true);
+@@ -1005,25 +1010,42 @@
+           )
+         );
+ 
++        const reviewedDuration = Number(review?.duration_seconds || activePlan?.total_duration_seconds || 0);
++        const reviewedShots = Array.isArray(review?.revised_shots) && review.revised_shots.length
++          ? review.revised_shots.length
++          : (activePlan?.shots?.length || 0);
++        const reviewedSources = new Set(
++          (Array.isArray(review?.revised_shots) ? review.revised_shots : activePlan?.shots || [])
++            .map((shot: any) => String(shot?.source_filename || ""))
++            .filter(Boolean)
++        ).size;
++        const target = Number(activePlan?.target_duration_seconds || masterPlan?.target_duration_seconds || 15);
++        const durationHealth = reviewedDuration >= target * 0.90 && reviewedDuration <= target * 1.02 ? 100 : Math.max(0, 100 - Math.abs(reviewedDuration - target) * 14);
++        const shotHealth = target >= 12 ? Math.min(100, reviewedShots >= 5 ? 100 : reviewedShots * 20) : 100;
++        const sourceHealth = clips.length >= 4 ? Math.min(100, reviewedSources >= 4 ? 100 : reviewedSources * 25) : 100;
++        const structuralHealth = durationHealth * 0.45 + shotHealth * 0.35 + sourceHealth * 0.20;
++        const rank = score * 0.82 + structuralHealth * 0.18;
++
+         setSelfReview(review);
+ 
+         console.log(
+-          `[ATLAS PRO EDIT] SCORE ${score}/100 | BEST ${
+-            bestScore < 0 ? "none" : bestScore
++          `[ATLAS PRO EDIT] SCORE ${score}/100 | STRUCTURE ${structuralHealth.toFixed(1)} | RANK ${rank.toFixed(1)} | BEST ${
++            bestRank < 0 ? "none" : bestRank.toFixed(1)
+           }`
+         );
+ 
+-        if (score > bestScore) {
++        if (rank > bestRank) {
++          bestRank = rank;
+           bestScore = score;
+           best = current;
+           bestReview = review;
+ 
+           console.log(
+-            `[ATLAS PRO EDIT] NEW BEST CUT: ${score}/100`
++            `[ATLAS PRO EDIT] NEW BEST CUT: ${score}/100 rank=${rank.toFixed(1)}`
+           );
+         } else {
+           console.log(
+-            `[ATLAS PRO EDIT] DISCARDING WEAKER CUT: ${score}/100`
++            `[ATLAS PRO EDIT] DISCARDING WEAKER CUT: ${score}/100 rank=${rank.toFixed(1)}`
+           );
+         }
+ 
+@@ -1059,13 +1081,9 @@
+           revisedPlan.total_duration_seconds || 0
+         );
+ 
+-        const minDuration = Math.max(
+-          10.5,
+-          Math.min(
+-            12.5,
+-            baseDuration * 0.82
+-          )
+-        );
++        const minDuration = baseDuration >= 12
++          ? Number((baseDuration * 0.90).toFixed(2))
++          : Number((baseDuration * 0.85).toFixed(2));
+ 
+         const shotCount =
+           revisedPlan.shots.length;

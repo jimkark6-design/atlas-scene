@@ -1,0 +1,6 @@
+{"runId":"75ee3b80-ef6b-4c81-a7e9-86346c9c2fe0","timestamp":"2026-08-26T18:37:05.265Z","stage":"ANALYSIS","event":"START","level":"info","data":{"clips":6}}
+{"runId":"75ee3b80-ef6b-4c81-a7e9-86346c9c2fe0","timestamp":"2026-08-26T18:37:05.265Z","stage":"RUN","event":"START","level":"info","data":{"objective":"Paint correction before ceramic coating — remove visible paint imperfections and prepare the surface for long-term protection.\n","clipCount":6,"pipeline":"ATLAS_PRO_EDITOR_V2"}}
+{"runId":"75ee3b80-ef6b-4c81-a7e9-86346c9c2fe0","timestamp":"2026-08-26T18:38:09.866Z","stage":"ANALYSIS","event":"COMPLETE","level":"info","data":{"clips":6}}
+{"runId":"75ee3b80-ef6b-4c81-a7e9-86346c9c2fe0","timestamp":"2026-08-26T18:38:15.340Z","stage":"MATCH_FOOTAGE","event":"COMPLETE","level":"info","data":{"matches":5}}
+{"runId":"75ee3b80-ef6b-4c81-a7e9-86346c9c2fe0","timestamp":"2026-08-26T18:41:24.776Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}
+{"runId":"75ee3b80-ef6b-4c81-a7e9-86346c9c2fe0","timestamp":"2026-08-26T18:41:43.680Z","stage":"EDIT_DIRECTOR","event":"COMPLETE","level":"info","data":{"beats":6,"speedRamps":6,"sfxEvents":6,"text":4}}

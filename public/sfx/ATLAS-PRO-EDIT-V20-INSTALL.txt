@@ -1,0 +1,65 @@
+ATLAS PRO EDIT V20 — PRO EDITING UPGRADE
+
+Replace these files:
+
+1) app/reel/page.tsx
+   <- ATLAS-PRO-EDIT-V20-page.tsx
+
+2) app/api/edit-director/route.ts
+   <- ATLAS-PRO-EDIT-V20-edit-director.ts
+
+3) app/api/render-remotion/route.ts
+   <- ATLAS-PRO-EDIT-V20-render-remotion.ts
+
+4) app/api/review-render/route.ts
+   <- ATLAS-PRO-EDIT-V20-review-render.ts
+
+5) remotion/AtlasRemotionEdit.tsx
+   <- ATLAS-PRO-EDIT-V20-AtlasRemotionEdit.tsx
+
+6) Copy the entire sfx folder to:
+   public/sfx/
+
+SFX included:
+- whoosh.wav
+- impact.wav
+- spray.wav
+- wipe.wav
+- click.wav
+- pop.wav
+
+DO NOT change the Remotion composition id. Keep:
+ATLAS_PRO_EDIT
+
+V20 adds:
+- Edit Director V3-level editorial choreography
+- stronger first-second hook selection
+- explicit cut-on reasoning
+- beat intent classification
+- dynamic zoom start/end execution
+- per-shot color-treatment execution
+- source-audio preservation when available
+- motivated shot-level SFX events
+- built-in lightweight SFX library
+- real voice-aware music ducking around captions
+- stronger text emphasis rendering
+- expanded transition execution
+- Review -> Edit Director V2/V3 -> NEW timeline -> Remotion loop
+- best-cut lock remains active
+
+After replacing files:
+
+Ctrl+C
+Remove-Item -Recurse -Force .next
+npm run dev
+
+Expected logs:
+
+[ATLAS PRO EDITOR V2] EXECUTABLE TIMELINE READY | beats=...
+ATLAS PRO EDITOR V2 — REMOTION
+[ATLAS V2 SHOT ...] ...
+ATLAS REVIEW AI RETURNED SCORE ... REVISE
+[ATLAS PRO EDITOR V2] NEW TIMELINE | beats=...
+ATLAS PRO EDITOR V2 — REMOTION
+
+The renderer must never invent the edit. It only executes the timeline.

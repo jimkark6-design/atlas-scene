@@ -1,0 +1,6 @@
+[2026-08-26T14:58:54.276Z] [5bb1948b-ada7-468f-a0f3-45f7f7633b79] INFO RUN START | objective=A professional full-detailing service that transforms a neglected vehicle through a precise cleaning process. | clipCount=6 | pipeline=ATLAS_PRO_EDITOR_V2
+[2026-08-26T14:58:54.275Z] [5bb1948b-ada7-468f-a0f3-45f7f7633b79] INFO ANALYSIS START | clips=6
+[2026-08-26T15:00:18.675Z] [5bb1948b-ada7-468f-a0f3-45f7f7633b79] INFO ANALYSIS COMPLETE | clips=6
+[2026-08-26T15:00:29.086Z] [5bb1948b-ada7-468f-a0f3-45f7f7633b79] INFO MATCH_FOOTAGE COMPLETE | matches=5
+[2026-08-26T15:00:56.836Z] [5bb1948b-ada7-468f-a0f3-45f7f7633b79] INFO MASTER_PLAN COMPLETE | shots=6
+[2026-08-26T15:01:23.225Z] [5bb1948b-ada7-468f-a0f3-45f7f7633b79] INFO EDIT_DIRECTOR COMPLETE | beats=7 | speedRamps=7 | sfxEvents=8 | text=7
