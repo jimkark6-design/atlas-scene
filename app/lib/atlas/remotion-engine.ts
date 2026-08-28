@@ -4,6 +4,7 @@ import os from "os";
 import crypto from "crypto";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
+import { validateSfxPlanForRender } from "./validate-sfx";
 
 type SfxEvent = {
   type?: string;
@@ -15,6 +16,7 @@ type SfxEvent = {
   mix_db?: number;
   source?: string;
   source_path?: string;
+  prompt?: string;
 };
 
 type RenderShot = {
@@ -88,26 +90,12 @@ const sfxFileForType = (type: string) => {
   };
 
   if (map[key]) return map[key];
-
-  if (/whoosh|whip|swipe|push|pull|move|transition|sweep/i.test(key)) {
-    return "sfx/whoosh.wav";
-  }
-  if (/water|wash|spray|pressure|foam|splash|rinse/i.test(key)) {
-    return "sfx/spray.wav";
-  }
-  if (/wipe|brush|scrub|cloth|microfiber|clean|rub/i.test(key)) {
-    return "sfx/wipe.wav";
-  }
-  if (/click|button|snap|tap|tick/i.test(key)) {
-    return "sfx/click.wav";
-  }
-  if (/pop|sparkle|shine|reveal|chime/i.test(key)) {
-    return "sfx/pop.wav";
-  }
-  if (/impact|hit|punch|accent|slam|thump/i.test(key)) {
-    return "sfx/impact.wav";
-  }
-
+  if (/whoosh|whip|swipe|push|pull|move|transition|sweep/i.test(key)) return "sfx/whoosh.wav";
+  if (/water|wash|spray|pressure|foam|splash|rinse/i.test(key)) return "sfx/spray.wav";
+  if (/wipe|brush|scrub|cloth|microfiber|clean|rub/i.test(key)) return "sfx/wipe.wav";
+  if (/click|button|snap|tap|tick/i.test(key)) return "sfx/click.wav";
+  if (/pop|sparkle|shine|reveal|chime/i.test(key)) return "sfx/pop.wav";
+  if (/impact|hit|punch|accent|slam|thump/i.test(key)) return "sfx/impact.wav";
   return null;
 };
 
@@ -124,23 +112,15 @@ function buildSfx(shots: RenderShot[]) {
   let timelineCursor = 0;
 
   for (const shot of shots) {
-    const sourceDuration = Math.max(
-      0.25,
-      safeNumber(shot.end, 1) - safeNumber(shot.start, 0),
-    );
-
+    const sourceDuration = Math.max(0.25, safeNumber(shot.end, 1) - safeNumber(shot.start, 0));
     const speed = clamp(safeNumber(shot.speed, 1), 0.25, 3);
     const renderedDuration = sourceDuration / speed;
-
-    const events = Array.isArray(shot.sfx_events)
-      ? shot.sfx_events
-      : [];
+    const events = Array.isArray(shot.sfx_events) ? shot.sfx_events : [];
 
     for (const event of events.slice(0, 16)) {
       const generatedSource = String(event?.source || "");
       const fallbackSource = sfxFileForType(String(event?.type || ""));
       const source = generatedSource || fallbackSource;
-
       if (!source) continue;
 
       const at = clamp(
@@ -167,20 +147,9 @@ function buildSfx(shots: RenderShot[]) {
 
 export async function renderAtlasWithRemotion(input: RenderInput) {
   const id = crypto.randomUUID();
-
-  const publicRoot = path.join(
-    process.cwd(),
-    "public",
-    ".atlas-remotion",
-    id,
-  );
-
-  const outDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), "atlas-remotion-output-"),
-  );
-
+  const publicRoot = path.join(process.cwd(), "public", ".atlas-remotion", id);
+  const outDir = await fs.mkdtemp(path.join(os.tmpdir(), "atlas-remotion-output-"));
   const output = path.join(outDir, "atlas-remotion.mp4");
-
   await fs.mkdir(publicRoot, { recursive: true });
 
   try {
@@ -189,95 +158,60 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
     for (let i = 0; i < input.files.length; i++) {
       const file = input.files[i];
       const ext = (file.name.split(".").pop() || "mp4").toLowerCase();
-      const safeExt = [
-        "mp4",
-        "mov",
-        "m4v",
-        "webm",
-        "mkv",
-        "avi",
-      ].includes(ext)
-        ? ext
-        : "mp4";
-
+      const safeExt = ["mp4", "mov", "m4v", "webm", "mkv", "avi"].includes(ext) ? ext : "mp4";
       const name = `clip-${i + 1}.${safeExt}`;
-
-      await fs.writeFile(
-        path.join(publicRoot, name),
-        Buffer.from(await file.arrayBuffer()),
-      );
-
+      await fs.writeFile(path.join(publicRoot, name), Buffer.from(await file.arrayBuffer()));
       assets[file.name] = `.atlas-remotion/${id}/${name}`;
     }
 
     let voice = "";
-
     if (input.voiceFile) {
       voice = `.atlas-remotion/${id}/voice.mp3`;
-
-      await fs.writeFile(
-        path.join(publicRoot, "voice.mp3"),
-        Buffer.from(await input.voiceFile.arrayBuffer()),
-      );
+      await fs.writeFile(path.join(publicRoot, "voice.mp3"), Buffer.from(await input.voiceFile.arrayBuffer()));
     }
 
     let music = "";
-
     if (input.musicFile) {
-      const ext = (
-        input.musicFile.name.split(".").pop() || "wav"
-      ).toLowerCase();
-
+      const ext = (input.musicFile.name.split(".").pop() || "wav").toLowerCase();
       const name = `music.${ext}`;
-
       music = `.atlas-remotion/${id}/${name}`;
-
-      await fs.writeFile(
-        path.join(publicRoot, name),
-        Buffer.from(await input.musicFile.arrayBuffer()),
-      );
+      await fs.writeFile(path.join(publicRoot, name), Buffer.from(await input.musicFile.arrayBuffer()));
     }
 
     const renderShots: RenderShot[] = input.shots.map((shot) => ({
       ...shot,
-      sfx_events: Array.isArray(shot.sfx_events)
-        ? shot.sfx_events.map((event: any) => ({ ...event }))
-        : [],
+      sfx_events: Array.isArray(shot.sfx_events) ? shot.sfx_events.map((event: any) => ({ ...event })) : [],
     }));
 
     const generatedSfxRoot = path.join(publicRoot, "generated-sfx");
     await fs.mkdir(generatedSfxRoot, { recursive: true });
-
     let generatedIndex = 0;
 
     for (const shot of renderShots) {
       for (const event of shot.sfx_events || []) {
         const sourcePath = String(event?.source_path || "");
         if (!sourcePath) continue;
-
         generatedIndex += 1;
         const ext = (path.extname(sourcePath) || ".mp3").toLowerCase();
         const filename = `sfx-${generatedIndex}${ext}`;
         const destination = path.join(generatedSfxRoot, filename);
-
         await fs.copyFile(sourcePath, destination);
-
         event.source = `.atlas-remotion/${id}/generated-sfx/${filename}`;
       }
     }
 
+    const validation = validateSfxPlanForRender(renderShots);
+
+    console.log(
+      `[ATLAS V2 AUDIO VALIDATION] PASS | events=${validation.events} | shotsWithSfx=${validation.shotsWithSfx} | duration=${validation.durationSeconds.toFixed(2)}s`,
+    );
+
     const sfx = buildSfx(renderShots);
-
-
 
     console.log(
       `[ATLAS V2 AUDIO] music=${music ? "ON" : "NONE"} voice=${voice ? "ON" : "NONE"} ducking=${input.musicDucking !== false ? "ON" : "OFF"}`,
     );
-
-    console.log(
-      `[ATLAS V2 SFX] events=${sfx.length}`,
-      sfx.map((x) => `${x.source}@${x.start.toFixed(2)}`).join(", "),
-    );
+    console.log(`[ATLAS V2 SFX] events=${sfx.length}`, sfx.map((x) => `${x.source}@${x.start.toFixed(2)}`).join(", "));
 
     const executedSpeedRamps = input.shots.filter((s: any) => {
       if (safeNumber(s.speed, 1) !== 1) return true;
@@ -298,30 +232,16 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
 
     console.log("ATLAS REMOTION: bundling edit engine...");
 
-    const serveUrl = await bundle({
-      entryPoint: path.resolve(
-        process.cwd(),
-        "remotion",
-        "index.ts",
-      ),
-    });
+    const serveUrl = await bundle({ entryPoint: path.resolve(process.cwd(), "remotion", "index.ts") });
 
     const inputProps = {
       shots: renderShots,
       assets,
       voice,
       music,
-      musicVolume: clamp(
-        safeNumber(input.musicVolume, 0.12),
-        0,
-        1,
-      ),
+      musicVolume: clamp(safeNumber(input.musicVolume, 0.12), 0, 1),
       musicDucking: input.musicDucking !== false,
-      musicDuckingDb: clamp(
-        safeNumber(input.musicDuckingDb, 10),
-        0,
-        24,
-      ),
+      musicDuckingDb: clamp(safeNumber(input.musicDuckingDb, 10), 0, 24),
       voicePriority: input.voicePriority || "HIGH",
       sfx,
       fps: 30,
@@ -329,16 +249,10 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
       height: 1920,
     };
 
-    const composition = await selectComposition({
-      serveUrl,
-      id: "ATLAS-PRO-EDIT",
-      inputProps,
-    });
+    const composition = await selectComposition({ serveUrl, id: "ATLAS-PRO-EDIT", inputProps });
 
     console.log(
-      `ATLAS REMOTION: rendering ${composition.durationInFrames} frames (${(
-        composition.durationInFrames / composition.fps
-      ).toFixed(2)}s)...`,
+      `ATLAS REMOTION: rendering ${composition.durationInFrames} frames (${(composition.durationInFrames / composition.fps).toFixed(2)}s)...`,
     );
 
     await renderMedia({
@@ -356,19 +270,10 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
     });
 
     const buffer = await fs.readFile(output);
-
-    console.log(
-      `ATLAS REMOTION: render complete | bytes=${buffer.length}`,
-    );
-
+    console.log(`ATLAS REMOTION: render complete | bytes=${buffer.length}`);
     return buffer;
   } finally {
-    await fs
-      .rm(publicRoot, { recursive: true, force: true })
-      .catch(() => {});
-
-    await fs
-      .rm(outDir, { recursive: true, force: true })
-      .catch(() => {});
+    await fs.rm(publicRoot, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(outDir, { recursive: true, force: true }).catch(() => {});
   }
 }
