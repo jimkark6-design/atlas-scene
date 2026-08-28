@@ -4,7 +4,7 @@ import os from "os";
 import crypto from "crypto";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition } from "@remotion/renderer";
-import { validateSfxPlan } from "./validate-sfx";
+import { validateSfxExecutionPlan } from "./validate-sfx-execution";
 
 type SfxEvent = {
   type?: string;
@@ -43,9 +43,7 @@ type RenderInput = {
   voicePriority?: string;
 };
 
-const clamp = (n: number, min: number, max: number) =>
-  Math.max(min, Math.min(max, n));
-
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 const safeNumber = (value: unknown, fallback: number) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
@@ -54,13 +52,11 @@ const safeNumber = (value: unknown, fallback: number) => {
 const sfxFileForType = (type: string) => {
   const key = String(type || "").trim().toLowerCase();
   const map: Record<string, string> = {
-    whoosh: "sfx/whoosh.wav", whip: "sfx/whoosh.wav", transition: "sfx/whoosh.wav",
-    camera_move: "sfx/whoosh.wav", camera_push: "sfx/whoosh.wav", camera_pull: "sfx/whoosh.wav", swipe: "sfx/whoosh.wav",
+    whoosh: "sfx/whoosh.wav", whip: "sfx/whoosh.wav", transition: "sfx/whoosh.wav", camera_move: "sfx/whoosh.wav", camera_push: "sfx/whoosh.wav", camera_pull: "sfx/whoosh.wav", swipe: "sfx/whoosh.wav",
     impact: "sfx/impact.wav", hit: "sfx/impact.wav", punch: "sfx/impact.wav", reveal: "sfx/impact.wav", accent: "sfx/impact.wav",
     spray: "sfx/spray.wav", water: "sfx/spray.wav", wash: "sfx/spray.wav", pressure_washer: "sfx/spray.wav", foam: "sfx/spray.wav", splash: "sfx/spray.wav",
     wipe: "sfx/wipe.wav", brush: "sfx/wipe.wav", scrub: "sfx/wipe.wav", microfiber: "sfx/wipe.wav", cloth: "sfx/wipe.wav", clean: "sfx/wipe.wav",
-    click: "sfx/click.wav", button: "sfx/click.wav", snap: "sfx/click.wav",
-    pop: "sfx/pop.wav", sparkle: "sfx/pop.wav", shine: "sfx/pop.wav", chime: "sfx/pop.wav",
+    click: "sfx/click.wav", button: "sfx/click.wav", snap: "sfx/click.wav", pop: "sfx/pop.wav", sparkle: "sfx/pop.wav", shine: "sfx/pop.wav", chime: "sfx/pop.wav",
   };
   if (map[key]) return map[key];
   if (/whoosh|whip|swipe|push|pull|move|transition|sweep/i.test(key)) return "sfx/whoosh.wav";
@@ -86,14 +82,7 @@ function buildSfx(shots: RenderShot[]) {
       const source = generatedSource || fallbackSource;
       if (!source) continue;
       const at = clamp(safeNumber(event?.at, 0), 0, Math.max(0, renderedDuration - 0.05));
-      effects.push({
-        source,
-        start: timelineCursor + at,
-        duration: Math.max(0.5, safeNumber(event?.duration, 0.8)),
-        volume: clamp(safeNumber(event?.volume, 0.14), 0.05, 0.32),
-        fadeIn: clamp(safeNumber(event?.fadeIn, 0.025), 0, 0.15),
-        fadeOut: clamp(safeNumber(event?.fadeOut, 0.08), 0.02, 0.25),
-      });
+      effects.push({ source, start: timelineCursor + at, duration: Math.max(0.5, safeNumber(event?.duration, 0.8)), volume: clamp(safeNumber(event?.volume, 0.14), 0.05, 0.32), fadeIn: clamp(safeNumber(event?.fadeIn, 0.025), 0, 0.15), fadeOut: clamp(safeNumber(event?.fadeOut, 0.08), 0.02, 0.25) });
     }
     timelineCursor += renderedDuration;
   }
@@ -137,13 +126,11 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
       sfx_events: Array.isArray(shot.sfx_events) ? shot.sfx_events.map((event: any) => ({ ...event })) : [],
     }));
 
-    // Hard gate: no SFX plan reaches the renderer unless it is executable and bounded.
-    validateSfxPlan(renderShots);
+    validateSfxExecutionPlan(renderShots);
 
     const generatedSfxRoot = path.join(publicRoot, "generated-sfx");
     await fs.mkdir(generatedSfxRoot, { recursive: true });
     let generatedIndex = 0;
-
     for (const shot of renderShots) {
       for (const event of shot.sfx_events || []) {
         const sourcePath = String(event?.source_path || "");
@@ -158,7 +145,6 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
     }
 
     const sfx = buildSfx(renderShots);
-
     console.log(`[ATLAS V2 AUDIO] music=${music ? "ON" : "NONE"} voice=${voice ? "ON" : "NONE"} ducking=${input.musicDucking !== false ? "ON" : "OFF"}`);
     console.log(`[ATLAS V2 SFX] events=${sfx.length}`, sfx.map((x) => `${x.source}@${x.start.toFixed(2)}`).join(", "));
 
@@ -169,12 +155,7 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
       const speeds = curve.map((p: any) => safeNumber(p?.speed, 1));
       return Math.max(...speeds) - Math.min(...speeds) > 0.08;
     }).length;
-
-    const plannedSfxEvents = input.shots.reduce(
-      (sum: number, s: any) => sum + (Array.isArray(s.sfx_events) ? s.sfx_events.length : 0),
-      0,
-    );
-
+    const plannedSfxEvents = input.shots.reduce((sum: number, s: any) => sum + (Array.isArray(s.sfx_events) ? s.sfx_events.length : 0), 0);
     console.log(`[ATLAS V2 EXECUTION] beats=${input.shots.length} | transitions=${input.shots.filter((s) => String(s.transition_in || "CUT").toUpperCase() !== "CUT" || String(s.transition_out || "CUT").toUpperCase() !== "CUT").length} | speedRamps=${executedSpeedRamps} | plannedSfx=${plannedSfxEvents} | executedSfx=${sfx.length} | text=${input.shots.filter((s) => String(s.on_screen_text || "").trim()).length}`);
     console.log("ATLAS REMOTION: bundling edit engine...");
 
@@ -196,21 +177,7 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
 
     const composition = await selectComposition({ serveUrl, id: "ATLAS-PRO-EDIT", inputProps });
     console.log(`ATLAS REMOTION: rendering ${composition.durationInFrames} frames (${(composition.durationInFrames / composition.fps).toFixed(2)}s)...`);
-
-    await renderMedia({
-      composition,
-      serveUrl,
-      codec: "h264",
-      outputLocation: output,
-      inputProps,
-      crf: 18,
-      x264Preset: "medium",
-      concurrency: 2,
-      audioCodec: "aac",
-      audioBitrate: "192k",
-      pixelFormat: "yuv420p",
-    });
-
+    await renderMedia({ composition, serveUrl, codec: "h264", outputLocation: output, inputProps, crf: 18, x264Preset: "medium", concurrency: 2, audioCodec: "aac", audioBitrate: "192k", pixelFormat: "yuv420p" });
     const buffer = await fs.readFile(output);
     console.log(`ATLAS REMOTION: render complete | bytes=${buffer.length}`);
     return buffer;
