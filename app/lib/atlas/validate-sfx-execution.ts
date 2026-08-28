@@ -37,6 +37,11 @@ export function validateSfxExecutionPlan(shots: SfxShot[]): void {
     throw new Error("SFX validation failed: no executable shots supplied.");
   }
 
+  // When AI SFX is disabled, any SFX metadata arriving from the advisory edit
+  // plan is non-executable. The render boundary must not validate it as audio.
+  const sfxEnabled = String(process.env.ATLAS_AI_SFX_ENABLED || "").toLowerCase() === "true";
+  if (!sfxEnabled) return;
+
   let totalEvents = 0;
 
   for (const shot of shots) {
