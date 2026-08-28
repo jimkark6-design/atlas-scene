@@ -19,6 +19,7 @@ const MAX_EVENTS_PER_SHOT = 8;
 const MAX_TOTAL_EVENTS = 24;
 const MIN_EVENT_DURATION = 0.05;
 const MAX_EVENT_DURATION = 8;
+const MAX_TIMELINE_OVERLAP = 0.08;
 const FALLBACK_SFX_TYPES = /whoosh|whip|swipe|push|pull|move|transition|sweep|water|wash|spray|pressure|foam|splash|rinse|wipe|brush|scrub|cloth|microfiber|clean|rub|click|button|snap|tap|tick|pop|sparkle|shine|reveal|chime|impact|hit|punch|accent|slam|thump/i;
 
 function finite(value: unknown, fallback: number): number {
@@ -32,6 +33,13 @@ function renderedShotDuration(shot: SfxShot): number {
   return sourceDuration / speed;
 }
 
+type AbsoluteEvent = {
+  shotId: string;
+  type: string;
+  start: number;
+  end: number;
+};
+
 export function validateSfxExecutionPlan(shots: SfxShot[]): void {
   if (!Array.isArray(shots) || shots.length === 0) {
     throw new Error("SFX validation failed: no executable shots supplied.");
@@ -43,6 +51,8 @@ export function validateSfxExecutionPlan(shots: SfxShot[]): void {
   if (!sfxEnabled) return;
 
   let totalEvents = 0;
+  let timelineCursor = 0;
+  const absoluteEvents: AbsoluteEvent[] = [];
 
   for (const shot of shots) {
     const events = Array.isArray(shot.sfx_events) ? shot.sfx_events : [];
@@ -79,6 +89,32 @@ export function validateSfxExecutionPlan(shots: SfxShot[]): void {
       if (!source && !sourcePath && !FALLBACK_SFX_TYPES.test(type)) {
         throw new Error(`SFX validation failed: ${shotId}/${type} has no generated source and no deterministic fallback.`);
       }
+
+      absoluteEvents.push({
+        shotId,
+        type,
+        start: timelineCursor + at,
+        end: timelineCursor + at + eventDuration,
+      });
+    }
+
+    timelineCursor += duration;
+  }
+
+  // Validate spacing on the actual executable timeline. `at` is shot-local,
+  // so comparing local values across shots can incorrectly reject or allow
+  // events. Small <=80ms overlaps are allowed for intentional layered accents;
+  // larger overlaps are rejected to keep physical Foley intelligible.
+  absoluteEvents.sort((a, b) => a.start - b.start);
+  for (let i = 1; i < absoluteEvents.length; i++) {
+    const previous = absoluteEvents[i - 1];
+    const current = absoluteEvents[i];
+    const overlap = previous.end - current.start;
+
+    if (overlap > MAX_TIMELINE_OVERLAP) {
+      throw new Error(
+        `SFX validation failed: ${previous.shotId}/${previous.type} overlaps ${current.shotId}/${current.type} by ${overlap.toFixed(3)}s on the executable timeline.`,
+      );
     }
   }
 }
