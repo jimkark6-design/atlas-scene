@@ -49,25 +49,6 @@ const safeNumber = (value: unknown, fallback: number) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
-const sfxFileForType = (type: string) => {
-  const key = String(type || "").trim().toLowerCase();
-  const map: Record<string, string> = {
-    whoosh: "sfx/whoosh.wav", whip: "sfx/whoosh.wav", transition: "sfx/whoosh.wav", camera_move: "sfx/whoosh.wav", camera_push: "sfx/whoosh.wav", camera_pull: "sfx/whoosh.wav", swipe: "sfx/whoosh.wav",
-    impact: "sfx/impact.wav", hit: "sfx/impact.wav", punch: "sfx/impact.wav", reveal: "sfx/impact.wav", accent: "sfx/impact.wav",
-    spray: "sfx/spray.wav", water: "sfx/spray.wav", wash: "sfx/spray.wav", pressure_washer: "sfx/spray.wav", foam: "sfx/spray.wav", splash: "sfx/spray.wav",
-    wipe: "sfx/wipe.wav", brush: "sfx/wipe.wav", scrub: "sfx/wipe.wav", microfiber: "sfx/wipe.wav", cloth: "sfx/wipe.wav", clean: "sfx/wipe.wav",
-    click: "sfx/click.wav", button: "sfx/click.wav", snap: "sfx/click.wav", pop: "sfx/pop.wav", sparkle: "sfx/pop.wav", shine: "sfx/pop.wav", chime: "sfx/pop.wav",
-  };
-  if (map[key]) return map[key];
-  if (/whoosh|whip|swipe|push|pull|move|transition|sweep/i.test(key)) return "sfx/whoosh.wav";
-  if (/water|wash|spray|pressure|foam|splash|rinse/i.test(key)) return "sfx/spray.wav";
-  if (/wipe|brush|scrub|cloth|microfiber|clean|rub/i.test(key)) return "sfx/wipe.wav";
-  if (/click|button|snap|tap|tick/i.test(key)) return "sfx/click.wav";
-  if (/pop|sparkle|shine|reveal|chime/i.test(key)) return "sfx/pop.wav";
-  if (/impact|hit|punch|accent|slam|thump/i.test(key)) return "sfx/impact.wav";
-  return null;
-};
-
 function buildSfx(shots: RenderShot[]) {
   const effects: Array<{ source: string; start: number; duration: number; volume: number; fadeIn: number; fadeOut: number }> = [];
   let timelineCursor = 0;
@@ -77,12 +58,19 @@ function buildSfx(shots: RenderShot[]) {
     const renderedDuration = sourceDuration / speed;
     const events = Array.isArray(shot.sfx_events) ? shot.sfx_events : [];
     for (const event of events.slice(0, 16)) {
-      const generatedSource = String(event?.source || "");
-      const fallbackSource = sfxFileForType(String(event?.type || ""));
-      const source = generatedSource || fallbackSource;
+      const source = String(event?.source || "").trim();
+      // There is deliberately NO local/default SFX fallback here.
+      // A sound is executable only when the SFX Director generated a real asset.
       if (!source) continue;
       const at = clamp(safeNumber(event?.at, 0), 0, Math.max(0, renderedDuration - 0.05));
-      effects.push({ source, start: timelineCursor + at, duration: Math.max(0.5, safeNumber(event?.duration, 0.8)), volume: clamp(safeNumber(event?.volume, 0.14), 0.05, 0.32), fadeIn: clamp(safeNumber(event?.fadeIn, 0.025), 0, 0.15), fadeOut: clamp(safeNumber(event?.fadeOut, 0.08), 0.02, 0.25) });
+      effects.push({
+        source,
+        start: timelineCursor + at,
+        duration: Math.max(0.5, safeNumber(event?.duration, 0.8)),
+        volume: clamp(safeNumber(event?.volume, 0.14), 0.05, 0.32),
+        fadeIn: clamp(safeNumber(event?.fadeIn, 0.025), 0, 0.15),
+        fadeOut: clamp(safeNumber(event?.fadeOut, 0.08), 0.02, 0.25),
+      });
     }
     timelineCursor += renderedDuration;
   }
@@ -121,12 +109,18 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
       await fs.writeFile(path.join(publicRoot, name), Buffer.from(await input.musicFile.arrayBuffer()));
     }
 
+    const aiSfxEnabled = String(process.env.ATLAS_AI_SFX_ENABLED || "").toLowerCase() === "true";
     const renderShots: RenderShot[] = input.shots.map((shot) => ({
       ...shot,
-      sfx_events: Array.isArray(shot.sfx_events) ? shot.sfx_events.map((event: any) => ({ ...event })) : [],
+      // Planned labels are not executable audio. When AI SFX is off, discard them completely.
+      sfx_events: aiSfxEnabled && Array.isArray(shot.sfx_events)
+        ? shot.sfx_events.map((event: any) => ({ ...event }))
+        : [],
     }));
 
-    validateSfxExecutionPlan(renderShots);
+    if (aiSfxEnabled) {
+      validateSfxExecutionPlan(renderShots);
+    }
 
     const generatedSfxRoot = path.join(publicRoot, "generated-sfx");
     await fs.mkdir(generatedSfxRoot, { recursive: true });
@@ -134,7 +128,12 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
     for (const shot of renderShots) {
       for (const event of shot.sfx_events || []) {
         const sourcePath = String(event?.source_path || "");
-        if (!sourcePath) continue;
+        if (!sourcePath) {
+          if (aiSfxEnabled) {
+            throw new Error(`SFX execution failed: ${shot.id}/${event?.type || "UNKNOWN"} has no generated source.`);
+          }
+          continue;
+        }
         generatedIndex += 1;
         const ext = (path.extname(sourcePath) || ".mp3").toLowerCase();
         const filename = `sfx-${generatedIndex}${ext}`;
@@ -146,7 +145,7 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
 
     const sfx = buildSfx(renderShots);
     console.log(`[ATLAS V2 AUDIO] music=${music ? "ON" : "NONE"} voice=${voice ? "ON" : "NONE"} ducking=${input.musicDucking !== false ? "ON" : "OFF"}`);
-    console.log(`[ATLAS V2 SFX] events=${sfx.length}`, sfx.map((x) => `${x.source}@${x.start.toFixed(2)}`).join(", "));
+    console.log(`[ATLAS V2 SFX] mode=${aiSfxEnabled ? "AI_GENERATED" : "OFF"} events=${sfx.length}`, sfx.map((x) => `${x.source}@${x.start.toFixed(2)}`).join(", "));
 
     const executedSpeedRamps = input.shots.filter((s: any) => {
       if (safeNumber(s.speed, 1) !== 1) return true;
