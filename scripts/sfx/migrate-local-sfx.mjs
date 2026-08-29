@@ -48,5 +48,21 @@ const replacement = [
 ].join("\n");
 
 source = source.slice(0, start) + replacement + source.slice(end);
+
+// Generated audio must survive until Remotion copies it into the render bundle.
+// The old implementation stored WAVs inside the temporary SFX-analysis folder,
+// which was deleted in the finally block before Remotion consumed source_path.
+const tempGeneratedDir = 'const generatedDir = path.join(\n      tempDir,\n      "generated",\n    );';
+const persistentGeneratedDir = 'const generatedDir = path.join(\n      process.cwd(),\n      "public",\n      ".atlas-sfx-cache",\n    );';
+
+if (!source.includes(tempGeneratedDir)) {
+  throw new Error("Could not locate temporary generatedDir in sfx-director.ts");
+}
+
+source = source.replace(
+  tempGeneratedDir,
+  persistentGeneratedDir,
+);
+
 fs.writeFileSync(file, source, "utf8");
-console.log("Patched " + file + " to use the local Stable Audio SFX provider.");
+console.log("Patched " + file + " to use the local Stable Audio SFX provider and persistent SFX cache.");
