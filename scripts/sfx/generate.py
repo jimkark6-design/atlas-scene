@@ -13,25 +13,17 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        import torch
         import torchaudio
         from stable_audio_3 import StableAudioModel
     except ImportError as exc:
-        print(
-            "ATLAS LOCAL SFX: missing Stable Audio 3 dependencies. Install the SFX runtime before rendering.",
-            file=sys.stderr,
-        )
+        print("ATLAS LOCAL SFX: missing Stable Audio 3 dependencies. Install the SFX runtime before rendering.", file=sys.stderr)
         raise SystemExit(2) from exc
 
     device = os.environ.get("ATLAS_SFX_DEVICE") or None
     model = StableAudioModel.from_pretrained("small-sfx", device=device)
-
-    # Stable Audio generation is deterministic for an explicit seed. ATLAS passes a
-    # prompt-derived seed so cache hits and regenerated renders stay reproducible.
     seed = args.seed
     if seed is None:
         seed = int(hashlib.sha1(f"{args.prompt}|{args.duration:.2f}".encode()).hexdigest()[:8], 16)
-
     steps = int(os.environ.get("ATLAS_SFX_STEPS", "16"))
     audio = model.generate(
         prompt=args.prompt,
@@ -40,7 +32,6 @@ def main() -> int:
         seed=seed,
         batch_size=1,
     )
-
     waveform = audio[0].detach().float().cpu()
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
     torchaudio.save(args.output, waveform, model.sample_rate)
