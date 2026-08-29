@@ -67,5 +67,11 @@ if (generatedDirPattern.test(source)) {
   throw new Error("Could not locate generatedDir in sfx-director.ts");
 }
 
+// mkdir must be safe when the persistent cache directory already exists.
+source = source.replace(
+  /await fs\.mkdir\(\s*generatedDir\s*,?\s*\);/s,
+  "await fs.mkdir(generatedDir, { recursive: true });",
+);
+
 fs.writeFileSync(file, source, "utf8");
 console.log("Patched " + file + " to use the local Stable Audio SFX provider and persistent SFX cache.");
