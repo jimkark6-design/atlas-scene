@@ -49,10 +49,10 @@ const replacement = [
 
 source = source.slice(0, start) + replacement + source.slice(end);
 
-// Generated audio must survive until Remotion copies it into the render bundle.
-// Match the generatedDir declaration by structure instead of exact whitespace,
-// because formatting changes in the source should not break this migration.
+// Make the migration idempotent: the persistent cache may already be present
+// from a previous migration run. In that case there is nothing to replace.
 const generatedDirPattern = /const generatedDir\s*=\s*path\.join\(\s*tempDir\s*,\s*["']generated["']\s*,?\s*\);/s;
+const persistentGeneratedDirPattern = /const generatedDir\s*=\s*path\.join\(\s*process\.cwd\(\)\s*,\s*["']public["']\s*,\s*["']\.atlas-sfx-cache["']\s*,?\s*\);/s;
 const persistentGeneratedDir = [
   "const generatedDir = path.join(",
   "      process.cwd(),",
@@ -61,14 +61,11 @@ const persistentGeneratedDir = [
   "    );",
 ].join("\n");
 
-if (!generatedDirPattern.test(source)) {
-  throw new Error("Could not locate temporary generatedDir in sfx-director.ts");
+if (generatedDirPattern.test(source)) {
+  source = source.replace(generatedDirPattern, persistentGeneratedDir);
+} else if (!persistentGeneratedDirPattern.test(source)) {
+  throw new Error("Could not locate generatedDir in sfx-director.ts");
 }
-
-source = source.replace(
-  generatedDirPattern,
-  persistentGeneratedDir,
-);
 
 fs.writeFileSync(file, source, "utf8");
 console.log("Patched " + file + " to use the local Stable Audio SFX provider and persistent SFX cache.");
