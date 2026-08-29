@@ -32,13 +32,27 @@ function cacheId(request: LocalSfxRequest) {
 }
 
 async function findPython() {
-  for (const command of ["python", "py"]) {
+  const configured = process.env.ATLAS_SFX_PYTHON;
+  const projectVenvPython = path.join(
+    process.cwd(),
+    ".stable-audio-3",
+    ".venv",
+    "Scripts",
+    "python.exe",
+  );
+
+  const candidates = [configured, projectVenvPython, "python", "py"].filter(Boolean) as string[];
+
+  for (const command of candidates) {
     try {
       await execFileAsync(command, ["--version"], { windowsHide: true });
       return command;
     } catch {}
   }
-  throw new Error("ATLAS LOCAL SFX: Python was not found. Install Python 3.10+ or configure ATLAS_SFX_PYTHON.");
+
+  throw new Error(
+    "ATLAS LOCAL SFX: Python was not found. Install Python 3.10+ or configure ATLAS_SFX_PYTHON.",
+  );
 }
 
 async function findGeneratorScript() {
@@ -56,17 +70,10 @@ async function findGeneratorScript() {
   }
 
   throw new Error(
-    "ATLAS LOCAL SFX: generator script is missing. Set ATLAS_SFX_GENERATOR_SCRIPT to the Stable Audio local generator."
+    "ATLAS LOCAL SFX: generator script is missing. Set ATLAS_SFX_GENERATOR_SCRIPT to the Stable Audio local generator.",
   );
 }
 
-/**
- * Stable Audio local adapter.
- *
- * This deliberately contains no library fallback. A generated WAV is the
- * only valid output. The adapter is isolated so the model/runtime can be
- * replaced later without changing the SFX Director or Remotion contracts.
- */
 export async function generateLocalSfx(
   request: LocalSfxRequest,
 ): Promise<LocalSfxResult> {
@@ -83,7 +90,9 @@ export async function generateLocalSfx(
     }
   } catch {}
 
-  const python = process.env.ATLAS_SFX_PYTHON || (await findPython());
+  // Prefer the project-local Stable Audio virtualenv. This is critical on
+  // Windows because the global Python may have an incompatible torchaudio.
+  const python = await findPython();
   const script = await findGeneratorScript();
   const duration = safeDuration(request.durationSeconds);
 
