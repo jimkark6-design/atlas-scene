@@ -102,10 +102,72 @@ function cleanMotion(value: any) {
   return (MOTIONS as readonly string[]).includes(v) ? v : "STATIC";
 }
 
+function repairAdjacentSourceDuplicates(timeline: any[]) {
+  const result = [...timeline];
+  const ctaIndex = result.findIndex(
+    (x) => String(x?.role || "").toUpperCase() === "CTA",
+  );
+  const cta = ctaIndex >= 0 ? result.splice(ctaIndex, 1)[0] : null;
+
+  // Preserve the AI's intended order as much as possible. When two adjacent
+  // beats use the same source, pull the nearest later beat from a different
+  // source forward. This fixes the invariant without inventing footage.
+  for (let pass = 0; pass < result.length * 2; pass++) {
+    let changed = false;
+
+    for (let i = 1; i < result.length; i++) {
+      if (result[i].source_filename !== result[i - 1].source_filename) continue;
+
+      let replacement = -1;
+      for (let j = i + 1; j < result.length; j++) {
+        if (result[j].source_filename !== result[i - 1].source_filename) {
+          replacement = j;
+          break;
+        }
+      }
+
+      if (replacement >= 0) {
+        [result[i], result[replacement]] = [result[replacement], result[i]];
+        changed = true;
+      }
+    }
+
+    if (!changed) break;
+  }
+
+  // CTA is required to remain the final beat. If its source would duplicate
+  // the preceding beat, swap the preceding position with the nearest earlier
+  // non-CTA source that differs from the CTA source.
+  if (cta) {
+    if (
+      result.length > 0 &&
+      result[result.length - 1].source_filename === cta.source_filename
+    ) {
+      let replacement = -1;
+      for (let j = result.length - 2; j >= 0; j--) {
+        if (result[j].source_filename !== cta.source_filename) {
+          replacement = j;
+          break;
+        }
+      }
+
+      if (replacement >= 0) {
+        [result[result.length - 1], result[replacement]] = [
+          result[replacement],
+          result[result.length - 1],
+        ];
+      }
+    }
+
+    result.push(cta);
+  }
+
+  return result;
+}
+
 function normalizeTimeline(rawTimeline: any[], analyses: any[], targetDuration: number) {
   const byName = new Map(analyses.map((x: any) => [String(x.filename), x]));
   const usedWindows = new Set<string>();
-  const usedSources = new Set<string>();
   const result: any[] = [];
 
   for (const item of rawTimeline || []) {
@@ -115,8 +177,8 @@ function normalizeTimeline(rawTimeline: any[], analyses: any[], targetDuration: 
     const duration = Number(src.duration) || 0;
     if (duration < 0.25) continue;
 
-    let start = clamp(Number(item.source_start) || 0, 0, Math.max(0, duration - 0.20));
-    let end = clamp(
+    const start = clamp(Number(item.source_start) || 0, 0, Math.max(0, duration - 0.20));
+    const end = clamp(
       Number(item.source_end) || Math.min(duration, start + 1.2),
       start + 0.25,
       duration,
@@ -125,17 +187,7 @@ function normalizeTimeline(rawTimeline: any[], analyses: any[], targetDuration: 
     const sig = `${item.source_filename}|${start.toFixed(2)}|${end.toFixed(2)}`;
     if (usedWindows.has(sig)) continue;
 
-    // Never allow adjacent reuse unless the clip is explicitly a different source window.
-    const previous = result[result.length - 1];
-    if (previous?.source_filename === String(item.source_filename)) {
-      const previousEnd = Number(previous.source_end);
-      if (Math.abs(start - previousEnd) < 0.35) {
-        continue;
-      }
-    }
-
     usedWindows.add(sig);
-    usedSources.add(String(item.source_filename));
 
     result.push({
       ...item,
@@ -165,16 +217,12 @@ function normalizeTimeline(rawTimeline: any[], analyses: any[], targetDuration: 
     });
   }
 
-  // Professional ~15s cuts need enough distinct editorial beats.
-  // Do not silently accept a 5-beat timeline when the source set supports more.
   if (result.length < 7) {
     throw new Error(
       `AI Edit Director produced only ${result.length} valid beats after normalization; expected at least 7. Regenerate instead of degrading the edit.`,
     );
   }
 
-  // CTA is mandatory for a booking/purchase/contact reel and must be final.
-  // Moving an existing CTA is safe; inventing one from a PAYOFF is not.
   const ctaIndexes = result
     .map((x, index) => ({ role: String(x.role || "").toUpperCase(), index }))
     .filter((x) => x.role === "CTA")
@@ -192,22 +240,22 @@ function normalizeTimeline(rawTimeline: any[], analyses: any[], targetDuration: 
     result.push(cta);
   }
 
-  // Keep the final beat long enough to function as a real payoff/CTA.
+  const repaired = repairAdjacentSourceDuplicates(result);
+
   const target = clamp(Number(targetDuration) || 15, 8, 60);
-  const total = result.reduce(
+  const total = repaired.reduce(
     (sum, x) => sum + Math.max(0, Number(x.source_end) - Number(x.source_start)),
     0,
   );
 
-  // If the AI undershot the target, extend later beats only when the real source has room.
   if (total < target * 0.90) {
     let remaining = target - total;
-    for (let i = result.length - 1; i >= 0 && remaining > 0.02; i--) {
-      const shot = result[i];
+    for (let i = repaired.length - 1; i >= 0 && remaining > 0.02; i--) {
+      const shot = repaired[i];
       const src: any = byName.get(shot.source_filename);
       const sourceDuration = Number(src?.duration) || Number(shot.source_end);
       const room = Math.max(0, sourceDuration - Number(shot.source_end));
-      const desired = i === result.length - 1 ? Math.max(0.8, remaining) : remaining;
+      const desired = i === repaired.length - 1 ? Math.max(0.8, remaining) : remaining;
       const add = Math.min(room, desired);
       if (add > 0) {
         shot.source_end = Number((Number(shot.source_end) + add).toFixed(3));
@@ -216,8 +264,7 @@ function normalizeTimeline(rawTimeline: any[], analyses: any[], targetDuration: 
     }
   }
 
-  // If still materially short, fail rather than silently producing a destructive short edit.
-  const finalTotal = result.reduce(
+  const finalTotal = repaired.reduce(
     (sum, x) => sum + Math.max(0, Number(x.source_end) - Number(x.source_start)),
     0,
   );
@@ -228,7 +275,7 @@ function normalizeTimeline(rawTimeline: any[], analyses: any[], targetDuration: 
     );
   }
 
-  return result;
+  return repaired;
 }
 
 export async function POST(request: Request) {
@@ -347,7 +394,7 @@ Before returning JSON, internally verify:
 - SFX are motivated by visible action
 - no invented claims
 
-Return ONLY JSON matching the schema.`
+Return ONLY JSON matching the schema.`;
 
     const response = await openai.responses.create({
       model: "gpt-5.4-mini",
@@ -384,7 +431,7 @@ Return ONLY JSON matching the schema.`
     ).length;
 
     if (sameAdjacent > 0) {
-      throw new Error("AI Edit Director produced adjacent duplicate sources.");
+      throw new Error("AI Edit Director produced adjacent duplicate sources after deterministic repair.");
     }
 
     if (uniqueSources < Math.min(4, analyses.length)) {
