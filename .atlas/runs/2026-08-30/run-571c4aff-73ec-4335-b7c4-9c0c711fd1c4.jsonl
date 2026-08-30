@@ -1,0 +1,6 @@
+{"runId":"571c4aff-73ec-4335-b7c4-9c0c711fd1c4","timestamp":"2026-08-30T11:12:22.887Z","stage":"REMOTION","event":"START","level":"info","data":{}}
+{"runId":"571c4aff-73ec-4335-b7c4-9c0c711fd1c4","timestamp":"2026-08-30T11:12:24.237Z","stage":"VALIDATION","event":"PASS","level":"info","data":{"beats":8,"files":8}}
+{"runId":"571c4aff-73ec-4335-b7c4-9c0c711fd1c4","timestamp":"2026-08-30T11:12:24.248Z","stage":"SFX_DIRECTOR","event":"START","level":"info","data":{"beats":8}}
+{"runId":"571c4aff-73ec-4335-b7c4-9c0c711fd1c4","timestamp":"2026-08-30T11:15:30.040Z","stage":"SFX_DIRECTOR","event":"COMPLETE","level":"info","data":{"generatedEvents":0}}
+{"runId":"571c4aff-73ec-4335-b7c4-9c0c711fd1c4","timestamp":"2026-08-30T11:15:30.047Z","stage":"REMOTION","event":"EXECUTION_PLAN","level":"info","data":{"beats":8,"sfxEvents":0,"speedRamps":8}}
+{"runId":"571c4aff-73ec-4335-b7c4-9c0c711fd1c4","timestamp":"2026-08-30T11:17:48.296Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a05263d073-f560c5cded3e4f78ade54f5509946de8","bytes":20665705,"durationMs":325409}}
