@@ -1,0 +1,7 @@
+{
+  "runId": "72c0b8a7-38c6-4611-b2d8-353964d2d813",
+  "generatedAt": "2026-08-30T12:12:44.070Z",
+  "status": "ERROR",
+  "durationMs": 443186,
+  "error": "Command failed with exit code 4294967294: C:\\Users\\EPIVATIKOS\\Downloads\\ATLAS-PreProduction-V6\\atlas-scene\\node_modules\\@remotion\\compositor-win32-x64-msvc\\ffmpeg.exe -hide_banner -i C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.514-assets7xscpkq2se\\remotion-assets-dir\\20168799185194075.mp3 -ac 2 -filter_script:a C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.514-assets7xscpkq2se\\remotion-complex-filter\\complex-filter-01502811178137604.txt -c:a pcm_s16le -ar 48000 -y C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.514-assets7xscpkq2se\\remotion-audio-mixing\\0.wav\nInput #0, matroska,webm, from 'C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.514-assets7xscpkq2se\\remotion-assets-dir\\20168799185194075.mp3':\r\n  Metadata:\r\n    encoder         : Chrome\r\n  Duration: 00:00:07.46, start: 0.000000, bitrate: 2 kb/s\r\n  Stream #0:0(eng): Audio: opus, 48000 Hz, mono, fltp (default)\r\n[out#0/wav @ 000001a4e61c3380] Error opening output C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.514-assets7xscpkq2se\\remotion-audio-mixing\\0.wav: No such file or directory\r\nError opening output file C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.514-assets7xscpkq2se\\remotion-audio-mixing\\0.wav.\r\nError opening output files: No such file or directory"
+}

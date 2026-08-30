@@ -1,0 +1,20 @@
+[2026-08-30T11:59:08.421Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] INFO RUN START | objective=A premium sushi dining experience focused on fresh ingredients, handcrafted sushi and precise Japanese preparation. | clipCount=8 | pipeline=ATLAS_PRO_EDITOR_V2
+[2026-08-30T11:59:08.420Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] INFO ANALYSIS START | clips=8
+[2026-08-30T12:00:46.236Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] INFO ANALYSIS COMPLETE | clips=8
+[2026-08-30T12:00:50.345Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] INFO MATCH_FOOTAGE COMPLETE | matches=5
+[2026-08-30T12:04:55.187Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] INFO MASTER_PLAN COMPLETE | shots=7
+[2026-08-30T12:05:02.240Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] INFO EDIT_DIRECTOR COMPLETE | beats=7 | speedRamps=0 | sfxEvents=7 | text=5
+[2026-08-30T12:05:20.884Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] INFO REMOTION START
+[2026-08-30T12:05:21.308Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] INFO VALIDATION PASS | beats=7 | files=8
+[2026-08-30T12:05:21.321Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] INFO SFX_DIRECTOR START | beats=7
+[2026-08-30T12:10:32.356Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] INFO SFX_DIRECTOR COMPLETE | generatedEvents=0
+[2026-08-30T12:10:32.363Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] INFO REMOTION EXECUTION_PLAN | beats=7 | sfxEvents=0 | speedRamps=7
+[2026-08-30T12:12:44.063Z] [72c0b8a7-38c6-4611-b2d8-353964d2d813] ERROR REMOTION ERROR | message=Command failed with exit code 4294967294: C:\Users\EPIVATIKOS\Downloads\ATLAS-PreProduction-V6\atlas-scene\node_modules\@remotion\compositor-win32-x64-msvc\ffmpeg.exe -hide_banner -i C:\Users\EPIVAT~1\AppData\Local\Temp\remotion-v4.0.514-assets7xscpkq2se\remotion-assets-dir\20168799185194075.mp3 -ac 2 -filter_script:a C:\Users\EPIVAT~1\AppData\Local\Temp\remotion-v4.0.514-assets7xscpkq2se\remotion-complex-filter\complex-filter-01502811178137604.txt -c:a pcm_s16le -ar 48000 -y C:\Users\EPIVAT~1\AppData\Local\Temp\remotion-v4.0.514-assets7xscpkq2se\remotion-audio-mixing\0.wav
+Input #0, matroska,webm, from 'C:\Users\EPIVAT~1\AppData\Local\Temp\remotion-v4.0.514-assets7xscpkq2se\remotion-assets-dir\20168799185194075.mp3':
+  Metadata:
+    encoder         : Chrome
+  Duration: 00:00:07.46, start: 0.000000, bitrate: 2 kb/s
+  Stream #0:0(eng): Audio: opus, 48000 Hz, mono, fltp (default)
+[out#0/wav @ 000001a4e61c3380] Error opening output C:\Users\EPIVAT~1\AppData\Local\Temp\remotion-v4.0.514-assets7xscpkq2se\remotion-audio-mixing\0.wav: No such file or directory
+Error opening output file C:\Users\EPIVAT~1\AppData\Local\Temp\remotion-v4.0.514-assets7xscpkq2se\remotion-audio-mixing\0.wav.
+Error opening output files: No such file or directory | durationMs=443178
