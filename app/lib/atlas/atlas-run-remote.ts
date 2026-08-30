@@ -1,13 +1,44 @@
 import { createHash } from "crypto";
+import { execFile } from "child_process";
+import { promisify } from "util";
 
+const execFileAsync = promisify(execFile);
 const DEFAULT_BRANCH = process.env.ATLAS_RUN_GIT_BRANCH || "main";
 const DEFAULT_REPO = process.env.ATLAS_RUN_GIT_REPO || "jimkark6-design/atlas-scene";
 
+async function commandToken(command: string, args: string[], input?: string) {
+  try {
+    const result = await execFileAsync(command, args, {
+      input,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    } as any);
+    const token = String(result.stdout || "").trim();
+    return token || "";
+  } catch {
+    return "";
+  }
+}
+
+async function resolveGithubToken() {
+  const envToken = process.env.ATLAS_GITHUB_TOKEN || process.env.GITHUB_TOKEN || process.env.GH_TOKEN || "";
+  if (envToken.trim()) return { token: envToken.trim(), source: "env" };
+
+  const ghToken = await commandToken("gh", ["auth", "token"]);
+  if (ghToken) return { token: ghToken, source: "gh-cli" };
+
+  const credentialInput = "protocol=https\nhost=github.com\n\n";
+  const credential = await commandToken("git", ["credential", "fill"], credentialInput);
+  const password = credential.match(/(?:^|\n)password=([^\n]+)/)?.[1]?.trim() || "";
+  if (password) return { token: password, source: "git-credential" };
+
+  return { token: "", source: "none" };
+}
+
 function githubConfig() {
-  const token = process.env.ATLAS_GITHUB_TOKEN || process.env.GITHUB_TOKEN || "";
   const repo = process.env.ATLAS_RUN_GIT_REPO || DEFAULT_REPO;
   const branch = process.env.ATLAS_RUN_GIT_BRANCH || DEFAULT_BRANCH;
-  return { token, repo, branch };
+  return { repo, branch };
 }
 
 async function githubJson(url: string, init: RequestInit, token: string) {
@@ -27,24 +58,33 @@ async function githubJson(url: string, init: RequestInit, token: string) {
   return body;
 }
 
-function runPath(runId: string) {
-  const day = new Date().toISOString().slice(0, 10);
+function runPath(runId: string, snapshot: any) {
+  const day = String(snapshot?.day || new Date().toISOString().slice(0, 10));
   return `.atlas/runs/${day}/run-${runId}.json`;
 }
 
 export async function syncAtlasRunSnapshot(runId: string, snapshot: unknown) {
-  const { token, repo, branch } = githubConfig();
-  if (!token) return { enabled: false, synced: false, reason: "missing ATLAS_GITHUB_TOKEN" };
+  const { repo, branch } = githubConfig();
   if (!repo) return { enabled: false, synced: false, reason: "missing ATLAS_RUN_GIT_REPO" };
 
+  const auth = await resolveGithubToken();
+  if (!auth.token) {
+    return {
+      enabled: true,
+      synced: false,
+      reason: "missing GitHub write credential; set ATLAS_GITHUB_TOKEN or authenticate gh/git",
+      authSource: auth.source,
+    };
+  }
+
   const payload = JSON.stringify(snapshot, null, 2) + "\n";
-  const path = runPath(runId);
+  const path = runPath(runId, snapshot);
   const url = `https://api.github.com/repos/${repo}/contents/${path}`;
-  const shaPayload = createHash("sha1").update(payload).digest("hex");
+  const contentHash = createHash("sha1").update(payload).digest("hex");
   let existingSha: string | undefined;
 
   try {
-    const existing = await githubJson(`${url}?ref=${encodeURIComponent(branch)}`, { method: "GET" }, token);
+    const existing = await githubJson(`${url}?ref=${encodeURIComponent(branch)}`, { method: "GET" }, auth.token);
     existingSha = existing?.sha;
   } catch (error: any) {
     if (!String(error?.message || "").includes("GitHub API 404")) throw error;
@@ -61,7 +101,7 @@ export async function syncAtlasRunSnapshot(runId: string, snapshot: unknown) {
         ...(existingSha ? { sha: existingSha } : {}),
       }),
     },
-    token,
+    auth.token,
   );
 
   return {
@@ -70,7 +110,8 @@ export async function syncAtlasRunSnapshot(runId: string, snapshot: unknown) {
     repo,
     branch,
     path,
-    contentHash: shaPayload,
+    contentHash,
+    authSource: auth.source,
     commitSha: response?.commit?.sha || null,
   };
 }
