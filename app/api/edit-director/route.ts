@@ -102,64 +102,90 @@ function cleanMotion(value: any) {
   return (MOTIONS as readonly string[]).includes(v) ? v : "STATIC";
 }
 
+/**
+ * Deterministically repair source adjacency without changing source windows.
+ * CTA stays fixed as the final beat. A small DP over the <=11 non-CTA beats
+ * finds the lowest-displacement ordering that has no adjacent same-source
+ * beats and also avoids creating a CTA/source collision at the end.
+ */
 function repairAdjacentSourceDuplicates(timeline: any[]) {
-  const result = [...timeline];
-  const ctaIndex = result.findIndex(
+  if (timeline.length < 2) return [...timeline];
+
+  const ctaIndex = timeline.findIndex(
     (x) => String(x?.role || "").toUpperCase() === "CTA",
   );
-  const cta = ctaIndex >= 0 ? result.splice(ctaIndex, 1)[0] : null;
+  const cta = ctaIndex >= 0 ? timeline[ctaIndex] : null;
+  const nonCta = timeline.filter((_, index) => index !== ctaIndex);
 
-  // Preserve the AI's intended order as much as possible. When two adjacent
-  // beats use the same source, pull the nearest later beat from a different
-  // source forward. This fixes the invariant without inventing footage.
-  for (let pass = 0; pass < result.length * 2; pass++) {
-    let changed = false;
-
-    for (let i = 1; i < result.length; i++) {
-      if (result[i].source_filename !== result[i - 1].source_filename) continue;
-
-      let replacement = -1;
-      for (let j = i + 1; j < result.length; j++) {
-        if (result[j].source_filename !== result[i - 1].source_filename) {
-          replacement = j;
-          break;
-        }
-      }
-
-      if (replacement >= 0) {
-        [result[i], result[replacement]] = [result[replacement], result[i]];
-        changed = true;
-      }
-    }
-
-    if (!changed) break;
+  if (!cta) {
+    return repairSequence(nonCta, "");
   }
 
-  // CTA is required to remain the final beat. If its source would duplicate
-  // the preceding beat, swap the preceding position with the nearest earlier
-  // non-CTA source that differs from the CTA source.
-  if (cta) {
-    if (
-      result.length > 0 &&
-      result[result.length - 1].source_filename === cta.source_filename
-    ) {
-      let replacement = -1;
-      for (let j = result.length - 2; j >= 0; j--) {
-        if (result[j].source_filename !== cta.source_filename) {
-          replacement = j;
-          break;
-        }
-      }
+  if (nonCta.length === 0) return [cta];
+  return [...repairSequence(nonCta, String(cta.source_filename)), cta];
+}
 
-      if (replacement >= 0) {
-        [result[result.length - 1], result[replacement]] = [
-          result[replacement],
-          result[result.length - 1],
-        ];
+function repairSequence(items: any[], blockedFinalSource: string) {
+  const n = items.length;
+  if (n <= 1) {
+    if (n === 1 && blockedFinalSource && String(items[0]?.source_filename) === blockedFinalSource) {
+      throw new Error("AI Edit Director cannot place a non-CTA beat before CTA without adjacent duplicate source.");
+    }
+    return [...items];
+  }
+
+  const source = items.map((item) => String(item?.source_filename || ""));
+  const memo = new Map<string, number>();
+  const choice = new Map<string, number>();
+
+  const solve = (mask: number, lastIndex: number, position: number): number => {
+    if (position === n) return 0;
+    const key = `${mask}|${lastIndex}|${position}`;
+    const cached = memo.get(key);
+    if (cached !== undefined) return cached;
+
+    let best = Number.POSITIVE_INFINITY;
+    let bestIndex = -1;
+
+    for (let i = 0; i < n; i++) {
+      if (mask & (1 << i)) continue;
+      if (lastIndex >= 0 && source[i] === source[lastIndex]) continue;
+      if (position === n - 1 && blockedFinalSource && source[i] === blockedFinalSource) continue;
+
+      const tail = solve(mask | (1 << i), i, position + 1);
+      if (!Number.isFinite(tail)) continue;
+
+      // Minimize displacement from the AI's original order. The tiny
+      // tie-breaker keeps earlier source positions preferred.
+      const cost = Math.abs(i - position) * 1000 + i + tail;
+      if (cost < best) {
+        best = cost;
+        bestIndex = i;
       }
     }
 
-    result.push(cta);
+    memo.set(key, best);
+    if (bestIndex >= 0) choice.set(key, bestIndex);
+    return best;
+  };
+
+  if (!Number.isFinite(solve(0, -1, 0))) {
+    throw new Error("AI Edit Director could not deterministically repair adjacent duplicate sources without violating CTA order.");
+  }
+
+  const result: any[] = [];
+  let mask = 0;
+  let lastIndex = -1;
+
+  for (let position = 0; position < n; position++) {
+    const key = `${mask}|${lastIndex}|${position}`;
+    const index = choice.get(key);
+    if (index === undefined) {
+      throw new Error("AI Edit Director deterministic source repair produced no valid sequence.");
+    }
+    result.push(items[index]);
+    mask |= 1 << index;
+    lastIndex = index;
   }
 
   return result;
@@ -396,31 +422,59 @@ Before returning JSON, internally verify:
 
 Return ONLY JSON matching the schema.`;
 
-    const response = await openai.responses.create({
-      model: "gpt-5.4-mini",
-      store: false,
-      input: [{ role: "user", content: prompt }],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "atlas_ai_edit_director_v2",
-          strict: true,
-          schema,
+    const createPlan = async (extraInstruction = "") => {
+      const response = await openai.responses.create({
+        model: "gpt-5.4-mini",
+        store: false,
+        input: [{
+          role: "user",
+          content: `${prompt}${extraInstruction ? `\n\nTARGETED REGENERATION INSTRUCTION:\n${extraInstruction}` : ""}`,
+        }],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "atlas_ai_edit_director_v2",
+            strict: true,
+            schema,
+          },
         },
-      },
-    });
+      });
 
-    if (!response.output_text) {
-      throw new Error("AI Edit Director returned no plan.");
+      if (!response.output_text) {
+        throw new Error("AI Edit Director returned no plan.");
+      }
+
+      return JSON.parse(response.output_text);
+    };
+
+    let raw: any;
+    let timeline: any[];
+
+    try {
+      raw = await createPlan();
+      timeline = normalizeTimeline(
+        Array.isArray(raw.timeline) ? raw.timeline : [],
+        analyses,
+        targetDuration,
+      );
+    } catch (error: any) {
+      const message = String(error?.message || error || "");
+
+      // Exactly one targeted regeneration is allowed for CTA contract failure.
+      // The regenerated plan is passed through normalizeTimeline again, so the
+      // strict CTA/source/timing validation is never bypassed.
+      if (!message.includes("exactly one CTA")) throw error;
+
+      console.warn("[ATLAS EDIT DIRECTOR] CTA contract failed; targeted regeneration 1/1");
+      raw = await createPlan(
+        "Regenerate the entire timeline. The previous response violated the CTA contract. Output exactly one beat with role=CTA, and it must be the final beat. Do not omit CTA and do not relabel another role after generation.",
+      );
+      timeline = normalizeTimeline(
+        Array.isArray(raw.timeline) ? raw.timeline : [],
+        analyses,
+        targetDuration,
+      );
     }
-
-    const raw = JSON.parse(response.output_text);
-
-    const timeline = normalizeTimeline(
-      Array.isArray(raw.timeline) ? raw.timeline : [],
-      analyses,
-      targetDuration,
-    );
 
     const uniqueSources = new Set(
       timeline.map((x) => String(x.source_filename)),
@@ -430,6 +484,8 @@ Return ONLY JSON matching the schema.`;
       (x, i) => i > 0 && x.source_filename === timeline[i - 1].source_filename,
     ).length;
 
+    // Strict invariant: repair must actually succeed. Never silently degrade
+    // or accept an invalid timeline after deterministic repair.
     if (sameAdjacent > 0) {
       throw new Error("AI Edit Director produced adjacent duplicate sources after deterministic repair.");
     }
