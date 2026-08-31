@@ -102,15 +102,21 @@ export async function POST(request: NextRequest) {
 
     await atlasRunEvent(runId, "REMOTION", "COMPLETE", { reviewId, bytes: remotionBuffer.length, durationMs: Date.now() - startedAt });
     await writeAtlasRunSummary(runId, { status: "COMPLETE", reviewId, durationMs: Date.now() - startedAt, beats: executableShots.length, files: files.length, sfxEvents: executableShots.reduce((n: number, s: any) => n + (Array.isArray(s.sfx_events) ? s.sfx_events.length : 0), 0), reviewPath, timelineAuditPath });
-    const syncResult = await syncAtlasRunToGit(runId);
-    console.log(`[ATLAS RUN ${runId}] RUN_SYNC | synced=${syncResult.synced} | reason=${syncResult.reason || ""}`);
 
+    // Never block the browser response on diagnostics/GitHub sync.
+    // The render is already complete at this point; syncing is observability only.
+    void syncAtlasRunToGit(runId)
+      .then((syncResult) => console.log(`[ATLAS RUN ${runId}] RUN_SYNC | synced=${syncResult.synced} | reason=${syncResult.reason || ""}`))
+      .catch((syncError: any) => console.warn(`[ATLAS RUN ${runId}] RUN_SYNC WARN | ${syncError?.message || String(syncError)}`));
+
+    console.log(`[ATLAS RUN ${runId}] REMOTION HTTP RESPONSE READY | reviewId=${reviewId} | bytes=${remotionBuffer.length}`);
     return new NextResponse(remotionBuffer, { status: 200, headers: { "Content-Type": "video/mp4", "Content-Disposition": 'attachment; filename="atlas-v2-reel.mp4"', "Content-Length": String(remotionBuffer.length), "Cache-Control": "no-store", "X-Atlas-Review-Id": reviewId, "X-Atlas-Render-Engine": "remotion-v2", "X-Atlas-SFX-Mode": process.env.ATLAS_AI_SFX_ENABLED === "false" ? "off" : "ai-generated", "X-Atlas-SFX-Events": String(executableShots.reduce((sum: number, shot: any) => sum + (Array.isArray(shot.sfx_events) ? shot.sfx_events.length : 0), 0)), "Access-Control-Expose-Headers": "X-Atlas-Review-Id, X-Atlas-Render-Engine, X-Atlas-SFX-Mode, X-Atlas-SFX-Events" } });
   } catch (error: any) {
     await atlasRunEvent(runId, "REMOTION", "ERROR", { message: error?.message || String(error), durationMs: Date.now() - startedAt }, "error");
     await writeAtlasRunSummary(runId, { status: "ERROR", durationMs: Date.now() - startedAt, error: error?.message || String(error) });
-    const syncResult = await syncAtlasRunToGit(runId);
-    console.log(`[ATLAS RUN ${runId}] RUN_SYNC | synced=${syncResult.synced} | reason=${syncResult.reason || ""}`);
+    void syncAtlasRunToGit(runId)
+      .then((syncResult) => console.log(`[ATLAS RUN ${runId}] RUN_SYNC | synced=${syncResult.synced} | reason=${syncResult.reason || ""}`))
+      .catch((syncError: any) => console.warn(`[ATLAS RUN ${runId}] RUN_SYNC WARN | ${syncError?.message || String(syncError)}`));
     console.error("ATLAS PRO EDITOR V2 REMOTION ERROR", error);
     return NextResponse.json({ error: error?.message || error?.stderr || "ATLAS V2 Remotion render failed." }, { status: 500 });
   }
