@@ -28,7 +28,9 @@ type RenderShot = {
   sfx?: string[];
   sfx_events?: SfxEvent[];
   source_audio_volume?: number;
+  music_volume?: number;
   music_intensity?: number;
+  music_curve?: Array<{ at?: number; level?: number }>;
   [key: string]: any;
 };
 
@@ -41,6 +43,20 @@ type RenderInput = {
   musicDucking?: boolean;
   musicDuckingDb?: number;
   voicePriority?: string;
+  captions?: Array<{
+    text: string;
+    start: number;
+    end: number;
+    emphasis?: boolean;
+    style?: string;
+    position?: string;
+  }>;
+  brand?: {
+    primaryColor?: string;
+    secondaryColor?: string;
+    fontFamily?: string;
+    logo?: string;
+  };
 };
 
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
@@ -59,8 +75,6 @@ function buildSfx(shots: RenderShot[]) {
     const events = Array.isArray(shot.sfx_events) ? shot.sfx_events : [];
     for (const event of events.slice(0, 16)) {
       const source = String(event?.source || "").trim();
-      // There is deliberately NO local/default SFX fallback here.
-      // A sound is executable only when the SFX Director generated a real asset.
       if (!source) continue;
       const at = clamp(safeNumber(event?.at, 0), 0, Math.max(0, renderedDuration - 0.05));
       effects.push({
@@ -112,7 +126,6 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
     const aiSfxEnabled = String(process.env.ATLAS_AI_SFX_ENABLED || "").toLowerCase() === "true";
     const renderShots: RenderShot[] = input.shots.map((shot) => ({
       ...shot,
-      // Planned labels are not executable audio. When AI SFX is off, discard them completely.
       sfx_events: aiSfxEnabled && Array.isArray(shot.sfx_events)
         ? shot.sfx_events.map((event: any) => ({ ...event }))
         : [],
@@ -168,6 +181,8 @@ export async function renderAtlasWithRemotion(input: RenderInput) {
       musicDucking: input.musicDucking !== false,
       musicDuckingDb: clamp(safeNumber(input.musicDuckingDb, 10), 0, 24),
       voicePriority: input.voicePriority || "HIGH",
+      captions: input.captions || [],
+      brand: input.brand,
       sfx,
       fps: 30,
       width: 1080,
