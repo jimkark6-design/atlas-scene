@@ -13,3 +13,6 @@
 {"runId":"56d1126b-c197-4199-b106-689511dd35aa","timestamp":"2026-08-30T19:59:04.955Z","stage":"SFX_DIRECTOR","event":"COMPLETE","level":"info","data":{"generatedEvents":0}}
 {"runId":"56d1126b-c197-4199-b106-689511dd35aa","timestamp":"2026-08-30T19:59:04.963Z","stage":"REMOTION","event":"EXECUTION_PLAN","level":"info","data":{"beats":8,"sfxEvents":0,"speedRamps":8}}
 {"runId":"56d1126b-c197-4199-b106-689511dd35aa","timestamp":"2026-08-30T20:02:02.811Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a05443c598-36c733ad3ca941e5bd00489257d6dede","bytes":19589471,"durationMs":420632}}
+{"runId":"56d1126b-c197-4199-b106-689511dd35aa","timestamp":"2026-08-30T20:37:21.120Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}
+{"runId":"56d1126b-c197-4199-b106-689511dd35aa","timestamp":"2026-08-30T20:48:01.048Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}
+{"runId":"56d1126b-c197-4199-b106-689511dd35aa","timestamp":"2026-08-30T20:48:08.735Z","stage":"EDIT_DIRECTOR","event":"COMPLETE","level":"info","data":{"beats":7,"speedRamps":0,"sfxEvents":6,"text":5}}
