@@ -1,4 +1,25 @@
-import type { MasterEditPlan, SourceAsset } from "./atlas-edit-contract";
+type SourceAsset = {
+  id: string;
+  filename: string;
+  duration: number;
+};
+
+type MasterEditPlan = {
+  beats: Array<{
+    id: string;
+    sourceId?: string;
+    sourceFilename: string;
+    order: number;
+    start: number;
+    end: number;
+    zoom: number;
+  }>;
+  targetDurationSeconds: number;
+  voice: {
+    mode: string;
+    script: string;
+  };
+};
 
 export type EditValidationIssue = {
   severity: "error" | "warning";
@@ -31,7 +52,7 @@ export function validateEditPlan(
 
   let total = 0;
   for (const beat of plan.beats) {
-    const source = byId.get(beat.sourceId) ?? byFilename.get(beat.sourceFilename);
+    const source = byId.get(beat.sourceId || "") ?? byFilename.get(beat.sourceFilename);
 
     if (!source) {
       issues.push({ severity: "error", code: "MISSING_SOURCE", message: `Source does not exist: ${beat.sourceFilename}`, beatId: beat.id });
