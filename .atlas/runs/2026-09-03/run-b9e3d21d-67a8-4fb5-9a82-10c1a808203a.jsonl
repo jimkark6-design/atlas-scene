@@ -1,0 +1,14 @@
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T14:50:02.482Z","stage":"RUN","event":"START","level":"info","data":{"objective":"A premium sushi dining experience focused on fresh ingredients, handcrafted sushi and precise Japanese preparation.","clipCount":8,"pipeline":"ATLAS_PRO_EDITOR_V2"}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T14:50:02.482Z","stage":"ANALYSIS","event":"START","level":"info","data":{"clips":8}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T14:51:44.905Z","stage":"ANALYSIS","event":"COMPLETE","level":"info","data":{"clips":8}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T14:51:50.063Z","stage":"MATCH_FOOTAGE","event":"COMPLETE","level":"info","data":{"matches":5}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T14:52:52.988Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":5}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T14:58:42.762Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T14:59:41.227Z","stage":"EDIT_DIRECTOR","event":"COMPLETE","level":"info","data":{"beats":8,"speedRamps":0,"sfxEvents":6,"text":3}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T15:00:20.934Z","stage":"REMOTION","event":"START","level":"info","data":{}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T15:00:21.297Z","stage":"VALIDATION","event":"PASS","level":"info","data":{"beats":8,"files":8}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T15:00:21.308Z","stage":"SFX_DIRECTOR","event":"START","level":"info","data":{"beats":8}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T15:04:23.663Z","stage":"SFX_DIRECTOR","event":"COMPLETE","level":"info","data":{"generatedEvents":0}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T15:04:23.675Z","stage":"REMOTION","event":"EXECUTION_PLAN","level":"info","data":{"beats":8,"sfxEvents":0,"speedRamps":8}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T15:06:44.061Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a067ced7cd-8e18ad82892c4b85962e78c2b368fc84","bytes":12162840,"durationMs":383128}}
+{"runId":"b9e3d21d-67a8-4fb5-9a82-10c1a808203a","timestamp":"2026-09-03T15:06:44.216Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a067ced7cd-8e18ad82892c4b85962e78c2b368fc84","bytes":12162840}}
