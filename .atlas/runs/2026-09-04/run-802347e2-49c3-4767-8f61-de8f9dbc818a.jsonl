@@ -1,0 +1,8 @@
+{"runId":"802347e2-49c3-4767-8f61-de8f9dbc818a","timestamp":"2026-09-04T15:46:50.859Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":6}}
+{"runId":"802347e2-49c3-4767-8f61-de8f9dbc818a","timestamp":"2026-09-04T15:47:33.763Z","stage":"EDIT_DIRECTOR","event":"COMPLETE","level":"info","data":{"beats":8,"speedRamps":0,"sfxEvents":6,"text":3}}
+{"runId":"802347e2-49c3-4767-8f61-de8f9dbc818a","timestamp":"2026-09-04T15:48:23.815Z","stage":"REMOTION","event":"START","level":"info","data":{}}
+{"runId":"802347e2-49c3-4767-8f61-de8f9dbc818a","timestamp":"2026-09-04T15:48:24.351Z","stage":"VALIDATION","event":"PASS","level":"info","data":{"beats":8,"files":8}}
+{"runId":"802347e2-49c3-4767-8f61-de8f9dbc818a","timestamp":"2026-09-04T15:48:24.364Z","stage":"SFX_DIRECTOR","event":"START","level":"info","data":{"beats":8}}
+{"runId":"802347e2-49c3-4767-8f61-de8f9dbc818a","timestamp":"2026-09-04T15:51:16.739Z","stage":"SFX_DIRECTOR","event":"COMPLETE","level":"info","data":{"generatedEvents":2}}
+{"runId":"802347e2-49c3-4767-8f61-de8f9dbc818a","timestamp":"2026-09-04T15:51:16.747Z","stage":"REMOTION","event":"EXECUTION_PLAN","level":"info","data":{"beats":8,"sfxEvents":2,"speedRamps":8}}
+{"runId":"802347e2-49c3-4767-8f61-de8f9dbc818a","timestamp":"2026-09-04T15:53:10.736Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a06d1fb921-540777e77eac4db7818b6d5d79707960","bytes":13850723,"durationMs":286921}}
