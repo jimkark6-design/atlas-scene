@@ -1,0 +1,12 @@
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T15:35:19.438Z","stage":"RUN","event":"START","level":"info","data":{"objective":"A premium sushi dining experience focused on fresh ingredients, handcrafted sushi and precise Japanese preparation.","clipCount":8,"pipeline":"ATLAS_PRO_EDITOR_V2"}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T15:35:19.438Z","stage":"ANALYSIS","event":"START","level":"info","data":{"clips":8}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T15:37:09.132Z","stage":"ANALYSIS","event":"COMPLETE","level":"info","data":{"clips":8}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T15:37:16.684Z","stage":"MATCH_FOOTAGE","event":"COMPLETE","level":"info","data":{"matches":5}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T15:41:47.010Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":6}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T15:45:14.182Z","stage":"EDIT_DIRECTOR","event":"COMPLETE","level":"info","data":{"beats":8,"speedRamps":0,"sfxEvents":8,"text":3}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T16:43:55.364Z","stage":"REMOTION","event":"START","level":"info","data":{}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T16:43:55.724Z","stage":"VALIDATION","event":"PASS","level":"info","data":{"beats":8,"files":8}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T16:43:55.742Z","stage":"SFX_DIRECTOR","event":"START","level":"info","data":{"beats":8}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T16:46:23.263Z","stage":"SFX_DIRECTOR","event":"COMPLETE","level":"info","data":{"generatedEvents":2}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T16:46:23.271Z","stage":"REMOTION","event":"EXECUTION_PLAN","level":"info","data":{"beats":8,"sfxEvents":2,"speedRamps":8}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T16:48:04.222Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a07278566e-e97177d210ff4fb9b0934db1c9955e2b","bytes":13520682,"durationMs":248858}}
