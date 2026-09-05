@@ -47,3 +47,9 @@
 {"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T17:18:29.716Z","stage":"REMOTION","event":"EXECUTION_PLAN","level":"info","data":{"beats":8,"sfxEvents":2,"speedRamps":8}}
 {"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T17:20:03.479Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a072959f87-b4a0e62bb73e492d9f3580727ee62600","bytes":13622859,"durationMs":224090}}
 {"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T17:20:03.567Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a072959f87-b4a0e62bb73e492d9f3580727ee62600","bytes":13622859}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T17:22:28.742Z","stage":"REMOTION","event":"START","level":"info","data":{}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T17:22:29.490Z","stage":"VALIDATION","event":"PASS","level":"info","data":{"beats":8,"files":8}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T17:22:29.501Z","stage":"SFX_DIRECTOR","event":"START","level":"info","data":{"beats":8}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T17:24:34.543Z","stage":"SFX_DIRECTOR","event":"COMPLETE","level":"info","data":{"generatedEvents":2}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T17:24:34.552Z","stage":"REMOTION","event":"EXECUTION_PLAN","level":"info","data":{"beats":8,"sfxEvents":2,"speedRamps":8}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-05T17:26:22.446Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a0729b67de-c5d0c6a6bde945bcadbd1e06c8e64f48","bytes":14031014,"durationMs":233705}}
