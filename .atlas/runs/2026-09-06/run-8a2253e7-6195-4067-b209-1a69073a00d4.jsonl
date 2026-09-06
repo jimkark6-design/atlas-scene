@@ -1,0 +1,8 @@
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T10:22:23.450Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T10:22:35.740Z","stage":"EDIT_DIRECTOR","event":"COMPLETE","level":"info","data":{"beats":8,"speedRamps":0,"sfxEvents":3,"text":3}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T10:22:42.462Z","stage":"REMOTION","event":"START","level":"info","data":{}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T10:22:42.920Z","stage":"VALIDATION","event":"PASS","level":"info","data":{"beats":8,"files":8}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T10:22:42.936Z","stage":"SFX_DIRECTOR","event":"START","level":"info","data":{"beats":8}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T10:26:02.491Z","stage":"SFX_DIRECTOR","event":"COMPLETE","level":"info","data":{"generatedEvents":3}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T10:26:02.497Z","stage":"REMOTION","event":"EXECUTION_PLAN","level":"info","data":{"beats":8,"sfxEvents":3,"speedRamps":8}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T10:27:49.365Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a0764291e1-d62bea23c93b4420859ab695250193d4","bytes":13336655,"durationMs":306903}}
