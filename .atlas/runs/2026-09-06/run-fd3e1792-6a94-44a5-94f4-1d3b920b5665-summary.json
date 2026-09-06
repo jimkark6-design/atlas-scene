@@ -1,12 +1,12 @@
 {
   "runId": "fd3e1792-6a94-44a5-94f4-1d3b920b5665",
-  "generatedAt": "2026-09-06T12:58:33.866Z",
+  "generatedAt": "2026-09-06T13:04:23.644Z",
   "status": "COMPLETE",
-  "reviewId": "1a076cc93eb-2390012a437a402da4f23c7cff9e0f34",
-  "durationMs": 237030,
+  "reviewId": "1a076d1ea48-3736ed39049943f78d178767366c6061",
+  "durationMs": 299812,
   "beats": 8,
   "files": 8,
-  "sfxEvents": 2,
-  "reviewPath": "C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\atlas-render-review-cache\\1a076cc93eb-2390012a437a402da4f23c7cff9e0f34.mp4",
-  "timelineAuditPath": "C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\atlas-render-review-cache\\1a076cc93eb-2390012a437a402da4f23c7cff9e0f34.json"
+  "sfxEvents": 3,
+  "reviewPath": "C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\atlas-render-review-cache\\1a076d1ea48-3736ed39049943f78d178767366c6061.mp4",
+  "timelineAuditPath": "C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\atlas-render-review-cache\\1a076d1ea48-3736ed39049943f78d178767366c6061.json"
 }
