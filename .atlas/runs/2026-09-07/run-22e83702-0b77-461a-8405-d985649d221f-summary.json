@@ -1,12 +1,7 @@
 {
   "runId": "22e83702-0b77-461a-8405-d985649d221f",
-  "generatedAt": "2026-09-07T17:13:37.565Z",
-  "status": "COMPLETE",
-  "reviewId": "1a07cdc73f2-4e1e116a1a24445aa1edee869aa0ff0a",
-  "durationMs": 279887,
-  "beats": 8,
-  "files": 8,
-  "sfxEvents": 3,
-  "reviewPath": "C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\atlas-render-review-cache\\1a07cdc73f2-4e1e116a1a24445aa1edee869aa0ff0a.mp4",
-  "timelineAuditPath": "C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\atlas-render-review-cache\\1a07cdc73f2-4e1e116a1a24445aa1edee869aa0ff0a.json"
+  "generatedAt": "2026-09-07T17:21:15.168Z",
+  "status": "ERROR",
+  "durationMs": 351035,
+  "error": "Command failed with exit code 4294967294: C:\\Users\\EPIVATIKOS\\Downloads\\ATLAS-PreProduction-V6\\atlas-scene\\node_modules\\@remotion\\compositor-win32-x64-msvc\\ffmpeg.exe -hide_banner -i C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.518-assets2cusujrume\\remotion-assets-dir\\5381443789228797.mp3 -ac 2 -filter_script:a C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.518-assets2cusujrume\\remotion-complex-filter\\complex-filter-07650431225543273.txt -c:a pcm_s16le -ar 48000 -y C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.518-assets2cusujrume\\remotion-audio-mixing\\1.wav\nInput #0, matroska,webm, from 'C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.518-assets2cusujrume\\remotion-assets-dir\\5381443789228797.mp3':\r\n  Metadata:\r\n    encoder         : Chrome\r\n  Duration: 00:00:01.14, start: 0.000000, bitrate: 130 kb/s\r\n  Stream #0:0(eng): Audio: opus, 48000 Hz, mono, fltp (default)\r\n[out#0/wav @ 00000177be8b3380] Error opening output C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.518-assets2cusujrume\\remotion-audio-mixing\\1.wav: No such file or directory\r\nError opening output file C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\remotion-v4.0.518-assets2cusujrume\\remotion-audio-mixing\\1.wav.\r\nError opening output files: No such file or directory"
 }
