@@ -50,3 +50,9 @@ Input #0, matroska,webm, from 'C:\Users\EPIVAT~1\AppData\Local\Temp\remotion-v4.
 [out#0/wav @ 000001da6b2f3380] Error opening output C:\Users\EPIVAT~1\AppData\Local\Temp\remotion-v4.0.518-assetshmoj9qiom4\remotion-audio-mixing\1.wav: No such file or directory
 Error opening output file C:\Users\EPIVAT~1\AppData\Local\Temp\remotion-v4.0.518-assetshmoj9qiom4\remotion-audio-mixing\1.wav.
 Error opening output files: No such file or directory | durationMs=415844
+[2026-09-07T17:40:42.824Z] [22e83702-0b77-461a-8405-d985649d221f] INFO REMOTION START
+[2026-09-07T17:40:43.779Z] [22e83702-0b77-461a-8405-d985649d221f] INFO VALIDATION PASS | beats=8 | files=8
+[2026-09-07T17:40:43.790Z] [22e83702-0b77-461a-8405-d985649d221f] INFO SFX_DIRECTOR START | beats=8
+[2026-09-07T17:44:30.005Z] [22e83702-0b77-461a-8405-d985649d221f] INFO SFX_DIRECTOR COMPLETE | generatedEvents=4
+[2026-09-07T17:44:30.011Z] [22e83702-0b77-461a-8405-d985649d221f] INFO REMOTION EXECUTION_PLAN | beats=8 | sfxEvents=4 | speedRamps=8
+[2026-09-07T17:47:22.650Z] [22e83702-0b77-461a-8405-d985649d221f] INFO REMOTION COMPLETE | reviewId=1a07cfb5a80-b84668ef6d1e4bae928705de1771de3e | bytes=14193286 | durationMs=399826
