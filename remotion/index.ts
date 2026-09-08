@@ -13,9 +13,17 @@ const shotDurationSeconds = (shot: any) => {
 const transitionOverlap = (shot: any, next: any, fps: number) => {
   if (!next) return 0;
   const type = String(next.transition_in || shot.transition_out || "CUT").toUpperCase();
-  const enabled = ["DISSOLVE","FADE","CROSSFADE","MATCH","WHIP","SLIDE_LEFT","SLIDE_RIGHT","SLIDE_UP","SLIDE_DOWN","ZOOM","PUNCH"].includes(type);
-  if (!enabled) return 0;
-  return Math.min(Math.round(0.28 * fps), Math.floor(Math.max(1, shotDurationSeconds(shot) * fps) * 0.18));
+  // EXECUTION FIDELITY V1:
+  // Directional/creative effects are cut-bound animations and must not shorten
+  // the approved timeline. Only true compositing transitions consume overlap.
+  const composited = ["DISSOLVE", "FADE", "CROSSFADE"].includes(type);
+  if (!composited) return 0;
+  const duration = Math.max(0.01, Number(next.transition_duration ?? shot.transition_duration ?? 0.18) || 0.18);
+  const shotFrames = Math.max(1, Math.round(shotDurationSeconds(shot) * fps));
+  return Math.min(
+    Math.max(0, shotFrames - 1),
+    Math.max(1, Math.round(duration * fps))
+  );
 };
 
 const Root: React.FC = () => React.createElement(Composition, {

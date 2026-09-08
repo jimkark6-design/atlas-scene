@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Stable Audio local repositories
+/.stable-audio-3/
+/.stable-audio-3-src/

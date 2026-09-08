@@ -34,7 +34,7 @@ def main() -> int:
     )
     waveform = audio[0].detach().float().cpu()
     os.makedirs(os.path.dirname(os.path.abspath(args.output)), exist_ok=True)
-    torchaudio.save(args.output, waveform, model.sample_rate)
+    torchaudio.save(args.output, waveform, 44100)
     print(f"ATLAS LOCAL SFX: generated {args.output} | seed={seed} | steps={steps}")
     return 0
 

@@ -5,7 +5,9 @@ import os from "os";
 import crypto from "crypto";
 import { renderAtlasWithRemotion } from "@/app/lib/atlas/remotion-engine";
 import { designAndGenerateSfx } from "@/app/lib/atlas/sfx-director";
-import { deriveSfxEvents, normalizeMusicCurve, normalizeSpeedCurve, validateExecutableTimeline } from "@/app/lib/atlas/atlas-edit-contract";
+import { validateExecutableTimeline } from "@/app/lib/atlas/atlas-edit-contract";
+import { normalizeAtlasEditPlan } from "@/app/lib/atlas/atlas-edit-normalizer";
+import { atlasPlanToRemotionShots } from "@/app/lib/atlas/atlas-remotion-adapter";
 import { atlasRunEvent, getAtlasRunId, syncAtlasRunToGit, writeAtlasRunSummary } from "@/app/lib/atlas/atlas-run-logger";
 
 export const runtime = "nodejs";
@@ -22,33 +24,6 @@ type TimelineBeat = {
 };
 
 function createReviewId() { return `${Date.now().toString(16)}-${crypto.randomUUID().replace(/-/g, "")}`; }
-function cleanRole(value: unknown) { const role = String(value || "STORY").toUpperCase(); return ["HOOK", "STORY", "PAYOFF", "CTA"].includes(role) ? role : "STORY"; }
-function cleanTransition(value: unknown) { const valueUpper = String(value || "CUT").toUpperCase(); return ["CUT", "DISSOLVE", "FADE", "WHIP", "MATCH", "ZOOM", "PUNCH", "SLIDE_LEFT", "SLIDE_RIGHT", "SLIDE_UP", "SLIDE_DOWN", "FLASH", "NONE"].includes(valueUpper) ? valueUpper : "CUT"; }
-function cleanCrop(value: unknown) { const valueUpper = String(value || "CENTER").toUpperCase(); return ["NONE", "CENTER", "FACE", "PRODUCT", "ACTION", "TOP", "BOTTOM", "LEFT", "RIGHT"].includes(valueUpper) ? valueUpper : "CENTER"; }
-function cleanSpeed(value: unknown) { const n = Number(value); if (!Number.isFinite(n)) return 1; return Math.max(0.25, Math.min(3, n)); }
-function cleanZoom(value: unknown) { const n = Number(value); if (!Number.isFinite(n)) return 1.04; return Math.max(1, Math.min(1.45, n)); }
-function finiteNumber(value: unknown): number | null { const n = Number(value); return Number.isFinite(n) ? n : null; }
-
-function normalizeBeat(beat: TimelineBeat, index: number) {
-  const rawStart = finiteNumber(beat.source_start) ?? finiteNumber((beat as any).start);
-  const rawEnd = finiteNumber(beat.source_end) ?? finiteNumber((beat as any).end);
-  const start = Math.max(0, rawStart ?? 0); const end = Math.max(start + 0.25, rawEnd ?? start + 1);
-  const zoomStart = cleanZoom(beat.zoom_start); const zoomEnd = cleanZoom(beat.zoom_end); const zoom = zoomStart;
-  return {
-    id: String(beat.id || `beat-${index + 1}`), role: cleanRole(beat.role), source_filename: String(beat.source_filename || ""),
-    source_start: start, source_end: end, start, end, purpose: String(beat.purpose || beat.cut_reason || ""),
-    visual_action: String(beat.motion || ""), visual_treatment: String(beat.color_treatment || ""), crop: cleanCrop(beat.crop_focus),
-    zoom, zoom_start: zoomStart, zoom_end: zoomEnd, transition_in: cleanTransition(beat.transition_in), transition_out: cleanTransition(beat.transition_out),
-    on_screen_text: String(beat.text || ""), caption_mode: "NONE", caption_emphasis: Array.isArray(beat.emphasis_words) ? beat.emphasis_words.map(String) : [],
-    music_intensity: Number(beat.music_volume) || 0, voice_priority: 1, speed: cleanSpeed(beat.speed),
-    speed_curve: normalizeSpeedCurve(beat.speed_curve, cleanSpeed(beat.speed)), motion: String(beat.motion || ""),
-    text_style: String(beat.text_style || ""), text_animation: String(beat.text_animation || "FADE"), text_position: String(beat.text_position || ""),
-    sfx: Array.isArray(beat.sfx) ? beat.sfx.map(String) : [], sfx_events: deriveSfxEvents(beat.sfx, beat.sfx_events, Math.max(0, end - start)),
-    music_curve: normalizeMusicCurve(beat.music_curve, Number(beat.music_volume) || 0.65), beat_intent: String(beat.beat_intent || ""),
-    cut_on: String(beat.cut_on || ""), editorial_score: Number(beat.editorial_score) || 0,
-  };
-}
-
 export async function POST(request: NextRequest) {
   const runId = getAtlasRunId(request); const startedAt = Date.now();
   try {
@@ -61,11 +36,103 @@ export async function POST(request: NextRequest) {
     if (typeof timelineRaw !== "string") return NextResponse.json({ error: "No executable editTimeline was supplied." }, { status: 400 });
     let parsedTimeline: any = null;
     try { parsedTimeline = JSON.parse(timelineRaw); } catch { return NextResponse.json({ error: "editTimeline is not valid JSON." }, { status: 400 }); }
-    const rawTimeline: TimelineBeat[] = Array.isArray(parsedTimeline) ? parsedTimeline : Array.isArray(parsedTimeline?.timeline) ? parsedTimeline.timeline : [];
-    if (rawTimeline.length < 1) return NextResponse.json({ error: "Executable editTimeline contains no beats." }, { status: 400 });
-    const uploadedNames = new Set(files.map((file) => file.name));
-    const shots = rawTimeline.map(normalizeBeat).filter((shot) => uploadedNames.has(shot.source_filename));
-    validateExecutableTimeline(shots, files.map((f) => ({ filename: f.name })));
+   const rawTimeline: TimelineBeat[] =
+  Array.isArray(parsedTimeline)
+    ? parsedTimeline
+    : Array.isArray(parsedTimeline?.timeline)
+      ? parsedTimeline.timeline
+      : [];
+
+if (rawTimeline.length < 1) {
+  return NextResponse.json(
+    { error: "Executable editTimeline contains no beats." },
+    { status: 400 },
+  );
+}
+
+const uploadedNames = new Set(
+  files.map((file) => file.name),
+);
+
+const filteredTimeline = rawTimeline.filter(
+  (beat) =>
+    uploadedNames.has(
+      String(beat.source_filename || ""),
+    ),
+);
+
+if (!filteredTimeline.length) {
+  return NextResponse.json(
+    {
+      error:
+        "None of the Edit Director timeline sources match uploaded clips.",
+    },
+    { status: 400 },
+  );
+}
+
+const clipAnalysesRaw = formData.get("clipAnalyses");
+
+let clipAnalyses: Array<{
+  filename: string;
+  duration: number;
+}> = [];
+
+if (typeof clipAnalysesRaw === "string") {
+  try {
+    const parsed = JSON.parse(clipAnalysesRaw);
+
+    if (Array.isArray(parsed)) {
+      clipAnalyses = parsed
+        .map((item: any) => ({
+          filename: String(item?.filename || ""),
+          duration: Number(item?.duration || 0),
+        }))
+        .filter(
+          (item) =>
+            item.filename &&
+            Number.isFinite(item.duration) &&
+            item.duration > 0,
+        );
+    }
+  } catch {
+    clipAnalyses = [];
+  }
+}
+
+const durationByFilename = new Map(
+  clipAnalyses.map((item) => [item.filename, item.duration]),
+);
+
+const sourceAssets = files.map((file) => {
+  const duration = durationByFilename.get(file.name);
+
+  if (!duration) {
+    throw new Error(
+      `Missing real analyzed duration for source: ${file.name}`,
+    );
+  }
+
+  return {
+    filename: file.name,
+    duration,
+  };
+});
+
+const canonicalPlan = normalizeAtlasEditPlan(
+  {
+    timeline: filteredTimeline,
+  },
+  sourceAssets,
+);
+
+validateExecutableTimeline(
+  canonicalPlan,
+  sourceAssets,
+);
+
+const shots =
+  atlasPlanToRemotionShots(canonicalPlan);
     await atlasRunEvent(runId, "VALIDATION", "PASS", { beats: shots.length, files: files.length });
     if (!shots.length) return NextResponse.json({ error: "None of the Edit Director timeline sources match uploaded clips." }, { status: 400 });
     console.log(`[ATLAS PRO EDITOR V2] EXECUTABLE TIMELINE READY | beats=${shots.length}`);
@@ -80,7 +147,12 @@ export async function POST(request: NextRequest) {
     if (typeof businessProfileRaw === "string") {
       try { const profile = JSON.parse(businessProfileRaw); brand = { primaryColor: profile?.brand_colors?.primary || profile?.primaryColor || "#FFFFFF", secondaryColor: profile?.brand_colors?.accent || profile?.secondaryColor || "#C8FF2B", fontFamily: profile?.brand_font || profile?.fontFamily, logo: profile?.logo_url || profile?.logo }; } catch { brand = undefined; }
     }
-    const musicVolume = shots.length ? shots.reduce((sum, shot) => sum + Number(shot.music_intensity || 0.12), 0) / shots.length : 0.12;
+    const musicVolume = shots.length
+      ? shots.reduce(
+          (sum, shot) => sum + Number(shot.music_volume ?? 0.12),
+          0,
+        ) / shots.length
+      : 0.12;
     let executableShots = shots;
 
     if (process.env.ATLAS_AI_SFX_ENABLED !== "false") {

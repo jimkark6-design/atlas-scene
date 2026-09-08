@@ -1,0 +1,13 @@
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T17:17:46.834Z","stage":"ANALYSIS","event":"START","level":"info","data":{"clips":8}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T17:17:46.835Z","stage":"RUN","event":"START","level":"info","data":{"objective":"A premium sushi dining experience focused on fresh ingredients, handcrafted sushi and precise Japanese preparation.","clipCount":8,"pipeline":"ATLAS_PRO_EDITOR_V2"}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T17:19:32.181Z","stage":"ANALYSIS","event":"COMPLETE","level":"info","data":{"clips":8}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T17:19:40.660Z","stage":"MATCH_FOOTAGE","event":"COMPLETE","level":"info","data":{"matches":5}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T17:20:56.297Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":6}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T17:27:00.748Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T17:33:01.567Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T17:34:38.909Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":6}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T17:39:43.023Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":6}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T18:41:25.616Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T18:49:18.787Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":6}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T18:53:34.978Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}
+{"runId":"b9dc8e61-0a33-4adb-b318-e8686390de1c","timestamp":"2026-09-03T18:56:31.830Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":8}}

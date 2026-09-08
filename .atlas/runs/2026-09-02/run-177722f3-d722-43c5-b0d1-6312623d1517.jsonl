@@ -1,0 +1,5 @@
+{"runId":"177722f3-d722-43c5-b0d1-6312623d1517","timestamp":"2026-09-02T20:28:48.988Z","stage":"ANALYSIS","event":"START","level":"info","data":{"clips":8}}
+{"runId":"177722f3-d722-43c5-b0d1-6312623d1517","timestamp":"2026-09-02T20:28:48.989Z","stage":"RUN","event":"START","level":"info","data":{"objective":"A premium sushi dining experience focused on fresh ingredients, handcrafted sushi and precise Japanese preparation.","clipCount":8,"pipeline":"ATLAS_PRO_EDITOR_V2"}}
+{"runId":"177722f3-d722-43c5-b0d1-6312623d1517","timestamp":"2026-09-02T20:30:58.288Z","stage":"ANALYSIS","event":"COMPLETE","level":"info","data":{"clips":8}}
+{"runId":"177722f3-d722-43c5-b0d1-6312623d1517","timestamp":"2026-09-02T20:31:04.773Z","stage":"MATCH_FOOTAGE","event":"COMPLETE","level":"info","data":{"matches":5}}
+{"runId":"177722f3-d722-43c5-b0d1-6312623d1517","timestamp":"2026-09-02T20:31:50.010Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}

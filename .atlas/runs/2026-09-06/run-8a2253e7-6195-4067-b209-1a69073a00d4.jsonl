@@ -52,3 +52,5 @@
 {"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T11:04:57.804Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}
 {"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T11:05:42.210Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a07665402f-1cec6e2e121747e0b2893baac4da9a80","bytes":14194688,"durationMs":275414}}
 {"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T11:05:42.313Z","stage":"REMOTION","event":"COMPLETE","level":"info","data":{"reviewId":"1a07665402f-1cec6e2e121747e0b2893baac4da9a80","bytes":14194688}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T11:10:22.954Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":6}}
+{"runId":"8a2253e7-6195-4067-b209-1a69073a00d4","timestamp":"2026-09-06T11:15:11.312Z","stage":"MASTER_PLAN","event":"COMPLETE","level":"info","data":{"shots":7}}

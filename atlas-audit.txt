@@ -1,0 +1,3929 @@
+﻿
+==================== ATLAS_ARCHITECTURE.md ====================
+
+# ATLAS CANONICAL ARCHITECTURE
+
+## Mission
+
+ATLAS is a deterministic AI-assisted commercial video editor. AI systems make editorial decisions; execution code executes those decisions. No renderer should invent creative decisions that were not present in the canonical edit plan.
+
+## Canonical pipeline
+
+```text
+Creative Brief
+  â†“
+Creative / Ideal Director
+  â†“
+Vision + Speech Intelligence
+  â†“
+Master Director
+  â†“
+AI Edit Director
+  â†“
+Canonical Executable Edit Contract
+  â†“
+Single Validation Boundary
+  â†“
+SFX / Audio Design
+  â†“
+Deterministic Remotion Render
+  â†“
+Execution Telemetry + Render Artifact
+  â†“
+Final Cut Review
+  â†“
+Targeted Revision
+  â†“
+Validation â†’ Render â†’ Review
+```
+
+## Responsibility boundaries
+
+### Directors
+Decide story, shot choice, timing, pacing, visual treatment, typography, transitions and audio intent.
+
+### Validator
+Rejects malformed or unsafe executable plans. It must not invent creative content or silently rewrite the director's intent.
+
+### SFX Director
+Converts explicit editorial audio intent into concrete SFX events/assets. It must not become a general-purpose visual editor.
+
+### Renderer
+Executes the canonical contract deterministically. It may perform technical safety normalization only when required to prevent a crash; it must not make creative substitutions.
+
+### Reviewer
+Judges the actual rendered result. It receives both visual evidence and execution metadata. A feature existing in JSON is not evidence that the feature actually appeared in the final render.
+
+### Memory
+Stores durable editorial lessons, successful patterns, failed patterns and important decisions. Memory is advisory context for Directors; it never overrides the current brief or explicit user requirements.
+
+## Non-negotiable invariants
+
+1. One canonical executable edit contract.
+2. One authoritative validation boundary before rendering.
+3. Renderer does not improvise creative edits.
+4. Review is based on the actual render, not only the plan.
+5. Revisions are targeted at identified root causes.
+6. Every meaningful architectural change is logged.
+7. Machine-specific paths and credentials do not define project behavior.
+8. Legacy code may remain temporarily for migration, but it must be clearly marked and must not silently become a second canonical pipeline.
+
+## Migration policy
+
+The repository currently contains historical/legacy render and versioned files. They are not removed blindly. Before deletion, callers must be traced and the canonical path must be verified with a successful render. Once unused, legacy paths can be archived or removed in a dedicated cleanup commit.
+
+==================== ATLAS-UNIFIED-WORKFLOW.md ====================
+
+# ATLAS Unified Workflow
+
+The `/create` and `/reel` experiences are now one workflow.
+
+- `/create` redirects to `/reel`.
+- Step 01 contains the Creative Brief and footage upload.
+- The Creative Brief is persisted locally and sent to the Master Director with vision and speech intelligence.
+- The Master Director is the source of truth for story, shots, speech, captions, transitions, visual treatment and audio direction.
+- Existing preview/music/caption/export steps remain after the AI edit.
+
+## Local setup
+
+1. Copy your existing `.env.local` into the project root. Do not commit it.
+2. Run `npm install`.
+3. If `ffmpeg-static` cannot download its binary, use the already-working `ffmpeg.exe` from your existing ATLAS install as previously configured.
+4. Run `npm run dev`.
+
+## Validation
+
+`npx tsc --noEmit` passes on the packaged source tree.
+
+==================== app/lib/atlas/atlas-edit-contract.ts ====================
+
+export type SpeedPoint = { at: number; speed: number };
+export type MusicPoint = { at: number; level: number };
+export type SfxEvent = { type: string; at: number; volume: number };
+
+export type AtlasEditBeat = {
+  id: string;
+  source_filename: string;
+  source_start: number;
+  source_end: number;
+  role: "HOOK" | "STORY" | "PAYOFF" | "CTA";
+  purpose: string;
+  cut_reason: string;
+  transition_in: string;
+  transition_out: string;
+  motion: string;
+  zoom_start: number;
+  zoom_end: number;
+  speed: number;
+  speed_curve: SpeedPoint[];
+  text: string;
+  text_style: string;
+  text_animation: string;
+  text_position: string;
+  emphasis_words: string[];
+  sfx: string[];
+  sfx_events: SfxEvent[];
+  source_audio_volume: number;
+  music_volume: number;
+  music_curve: MusicPoint[];
+  color_treatment: string;
+  crop_focus: string;
+  editorial_score: number;
+  beat_intent: string;
+  cut_on: string;
+};
+
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+
+export function normalizeSpeedCurve(value: unknown, fallback = 1): SpeedPoint[] {
+  if (!Array.isArray(value) || value.length < 2) {
+    return [
+      { at: 0, speed: clamp(fallback, 0.5, 2) },
+      { at: 1, speed: clamp(fallback, 0.5, 2) },
+    ];
+  }
+  const points = value
+    .map((p: any) => ({
+      at: clamp(Number(p?.at), 0, 1),
+      speed: clamp(Number(p?.speed) || fallback, 0.5, 2),
+    }))
+    .sort((a, b) => a.at - b.at);
+  if (points[0].at !== 0) points.unshift({ at: 0, speed: points[0].speed });
+  if (points[points.length - 1].at !== 1) points.push({ at: 1, speed: points[points.length - 1].speed });
+  return points.slice(0, 5);
+}
+
+export function normalizeMusicCurve(value: unknown, fallback = 0.65): MusicPoint[] {
+  if (!Array.isArray(value) || value.length < 2) {
+    const level = clamp(fallback, 0, 1);
+    return [{ at: 0, level }, { at: 1, level }];
+  }
+  const points = value
+    .map((p: any) => ({ at: clamp(Number(p?.at), 0, 1), level: clamp(Number(p?.level), 0, 1) }))
+    .sort((a, b) => a.at - b.at);
+  if (points[0].at !== 0) points.unshift({ at: 0, level: points[0].level });
+  if (points[points.length - 1].at !== 1) points.push({ at: 1, level: points[points.length - 1].level });
+  return points.slice(0, 6);
+}
+
+export function deriveSfxEvents(labels: unknown, existing: unknown, duration: number): SfxEvent[] {
+  const existingEvents = Array.isArray(existing)
+    ? existing.map((e: any) => ({
+        type: String(e?.type || "NONE").toUpperCase(),
+        at: clamp(Number(e?.at) || 0, 0, Math.max(0, duration - 0.08)),
+        volume: clamp(Number(e?.volume) || 0.18, 0, 1),
+      }))
+    : [];
+  if (existingEvents.length) return existingEvents.slice(0, 3);
+
+  const map: Record<string, { type: string; at: number; volume: number }> = {
+    WATER: { type: "WATER", at: 0.42, volume: 0.24 },
+    SPRAY: { type: "WATER", at: 0.42, volume: 0.24 },
+    FOAM: { type: "FOAM", at: 0.45, volume: 0.2 },
+    WIPE: { type: "WIPE", at: 0.45, volume: 0.18 },
+    BRUSH: { type: "WIPE", at: 0.45, volume: 0.2 },
+    SCRUB: { type: "WIPE", at: 0.45, volume: 0.2 },
+    MACHINE: { type: "MACHINE", at: 0.35, volume: 0.16 },
+    WHOOSH: { type: "WHOOSH", at: 0.18, volume: 0.13 },
+    HOOK_IMPACT: { type: "HOOK_IMPACT", at: 0.08, volume: 0.2 },
+    REVEAL_IMPACT: { type: "REVEAL_IMPACT", at: 0.2, volume: 0.24 },
+    CTA_HIT: { type: "CTA_HIT", at: 0.18, volume: 0.18 },
+    CLICK: { type: "CLICK", at: 0.2, volume: 0.14 },
+    POP: { type: "POP", at: 0.2, volume: 0.14 },
+  };
+  return (Array.isArray(labels) ? labels : [])
+    .map((x) => map[String(x || "").toUpperCase()])
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((x) => ({ ...x, at: Math.min(x.at, Math.max(0, duration - 0.08)) }));
+}
+
+export function validateExecutableTimeline(timeline: any[], analyses: any[]) {
+  if (!Array.isArray(timeline) || timeline.length < 5) throw new Error("Executable timeline needs at least 5 beats.");
+  const names = new Set(analyses.map((x: any) => String(x.filename)));
+  const seenWindows = new Set<string>();
+  for (const beat of timeline) {
+    const filename = String(beat?.source_filename || "");
+
+    if (!names.has(filename)) {
+      throw new Error(`Timeline source missing: ${filename}`);
+    }
+
+    const sourceStart = Number(beat?.source_start);
+    const sourceEnd = Number(beat?.source_end);
+
+    if (!Number.isFinite(sourceStart) || !Number.isFinite(sourceEnd)) {
+      throw new Error(
+        `Invalid source window: ${filename}|${sourceStart}|${sourceEnd} | beat=${beat?.id || "unknown"}`
+      );
+    }
+
+    if (sourceStart < 0) {
+      throw new Error(
+        `Invalid source_start: ${filename}|${sourceStart} | beat=${beat?.id || "unknown"}`
+      );
+    }
+
+    if (sourceEnd <= sourceStart) {
+      throw new Error(
+        `Invalid source window: ${filename}|${sourceStart}|${sourceEnd} | beat=${beat?.id || "unknown"}`
+      );
+    }
+
+    const duration = sourceEnd - sourceStart;
+    if (duration < 0.25) throw new Error(`Timeline beat too short: ${beat.id}`);
+
+    const sig = `${filename}|${sourceStart.toFixed(3)}|${sourceEnd.toFixed(3)}`;
+    if (seenWindows.has(sig)) {
+      throw new Error(`Duplicate source window: ${sig} | beat=${beat?.id || "unknown"}`);
+    }
+    seenWindows.add(sig);
+    if (!Array.isArray(beat.speed_curve) || beat.speed_curve.length < 2) throw new Error(`Missing speed curve: ${beat.id}`);
+    if (!Array.isArray(beat.music_curve) || beat.music_curve.length < 2) throw new Error(`Missing music curve: ${beat.id}`);
+    if (!Array.isArray(beat.sfx_events)) throw new Error(`Missing SFX event array: ${beat.id}`);
+  }
+  if (String(timeline[timeline.length - 1].role) !== "CTA") throw new Error("CTA must be the final executable beat.");
+  return true;
+}
+
+==================== app/lib/atlas/atlas-validate-edit-plan.ts ====================
+
+type SourceAsset = {
+  id: string;
+  filename: string;
+  duration: number;
+};
+
+type MasterEditPlan = {
+  beats: Array<{
+    id: string;
+    sourceId?: string;
+    sourceFilename: string;
+    order: number;
+    start: number;
+    end: number;
+    zoom: number;
+  }>;
+  targetDurationSeconds: number;
+  voice: {
+    mode: string;
+    script: string;
+  };
+};
+
+export type EditValidationIssue = {
+  severity: "error" | "warning";
+  code: string;
+  message: string;
+  beatId?: string;
+};
+
+export function validateEditPlan(
+  plan: MasterEditPlan,
+  sources: SourceAsset[],
+): EditValidationIssue[] {
+  const issues: EditValidationIssue[] = [];
+  const byId = new Map(sources.map((s) => [s.id, s]));
+  const byFilename = new Map(sources.map((s) => [s.filename, s]));
+  const seenWindows = new Set<string>();
+
+  if (!plan.beats.length) {
+    issues.push({ severity: "error", code: "NO_BEATS", message: "Edit plan contains no beats." });
+    return issues;
+  }
+
+  if (plan.beats.length > 1) {
+    for (let i = 1; i < plan.beats.length; i++) {
+      if (plan.beats[i].order <= plan.beats[i - 1].order) {
+        issues.push({ severity: "error", code: "ORDER", message: "Beat order is not strictly increasing.", beatId: plan.beats[i].id });
+      }
+    }
+  }
+
+  let total = 0;
+  for (const beat of plan.beats) {
+    const source = byId.get(beat.sourceId || "") ?? byFilename.get(beat.sourceFilename);
+
+    if (!source) {
+      issues.push({ severity: "error", code: "MISSING_SOURCE", message: `Source does not exist: ${beat.sourceFilename}`, beatId: beat.id });
+      continue;
+    }
+
+    if (!(beat.end > beat.start)) {
+      issues.push({ severity: "error", code: "INVALID_RANGE", message: "Beat end must be greater than start.", beatId: beat.id });
+      continue;
+    }
+
+    if (beat.start < 0 || beat.end > source.duration + 0.05) {
+      issues.push({ severity: "error", code: "OUT_OF_RANGE", message: `Beat ${beat.start.toFixed(2)}-${beat.end.toFixed(2)} exceeds source duration ${source.duration.toFixed(2)}s.`, beatId: beat.id });
+    }
+
+    if (beat.zoom < 1 || beat.zoom > 1.18) {
+      issues.push({ severity: "error", code: "ZOOM", message: "Zoom must be between 1.0 and 1.18.", beatId: beat.id });
+    }
+
+    const windowKey = `${source.id}:${beat.start.toFixed(3)}:${beat.end.toFixed(3)}`;
+    if (seenWindows.has(windowKey)) {
+      issues.push({ severity: "warning", code: "DUPLICATE_WINDOW", message: "Exact source window is repeated.", beatId: beat.id });
+    }
+    seenWindows.add(windowKey);
+    total += beat.end - beat.start;
+  }
+
+  const drift = Math.abs(total - plan.targetDurationSeconds);
+  if (drift > 1.5) {
+    issues.push({ severity: "warning", code: "DURATION_DRIFT", message: `Visual duration ${total.toFixed(2)}s differs from target ${plan.targetDurationSeconds.toFixed(2)}s.` });
+  }
+
+  if (plan.voice.mode !== "NONE" && !plan.voice.script.trim()) {
+    issues.push({ severity: "error", code: "EMPTY_VOICE", message: "Voice mode is enabled but the script is empty." });
+  }
+
+  return issues;
+}
+
+==================== app/api/director/route.ts ====================
+
+import OpenAI from "openai";
+import { NextResponse } from "next/server";
+
+const apiKey = process.env.OPENAI_API_KEY;
+
+const openai = apiKey
+  ? new OpenAI({
+      apiKey,
+    })
+  : null;
+
+const productionPlanSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    title: { type: "string" },
+    duration_seconds: { type: "integer" },
+    format: { type: "string" },
+    goal: { type: "string" },
+    style: { type: "string" },
+    recommendation: { type: "string" },
+
+    // Existing frontend-compatible structure
+    script: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        hook: { type: "string" },
+        setup: { type: "string" },
+        development: { type: "string" },
+        payoff: { type: "string" },
+        ending: { type: "string" },
+        voiceover: { type: "string" },
+      },
+      required: [
+        "hook",
+        "setup",
+        "development",
+        "payoff",
+        "ending",
+        "voiceover",
+      ],
+    },
+
+    audio: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        music_mood: { type: "string" },
+        natural_sound: { type: "string" },
+        sound_effects: { type: "string" },
+        voiceover: { type: "string" },
+      },
+      required: [
+        "music_mood",
+        "natural_sound",
+        "sound_effects",
+        "voiceover",
+      ],
+    },
+
+    captions: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enabled: { type: "boolean" },
+        style: { type: "string" },
+        strategy: { type: "string" },
+      },
+      required: ["enabled", "style", "strategy"],
+    },
+
+    creative_brief: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        raw_request: { type: "string" },
+        platform: { type: "string" },
+        objective: { type: "string" },
+        audience: { type: "string" },
+        desired_action: { type: "string" },
+        core_message: { type: "string" },
+        tone: { type: "string" },
+        pacing: { type: "string" },
+        target_duration_seconds: { type: "integer" },
+        visual_style: { type: "string" },
+      },
+      required: [
+        "raw_request",
+        "platform",
+        "objective",
+        "audience",
+        "desired_action",
+        "core_message",
+        "tone",
+        "pacing",
+        "target_duration_seconds",
+        "visual_style",
+      ],
+    },
+
+    // NEW: the ideal creative blueprint exists before real footage is seen.
+    creative_strategy: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        scenario_type: { type: "string" },
+        scenario_reason: { type: "string" },
+        scenario_pattern: { type: "string" },
+        concept: { type: "string" },
+        hook_strategy: { type: "string" },
+        story_strategy: { type: "string" },
+        payoff_strategy: { type: "string" },
+        cta_strategy: { type: "string" },
+        retention_strategy: { type: "string" },
+        visual_style: { type: "string" },
+      },
+      required: [
+        "scenario_type",
+        "scenario_reason",
+        "scenario_pattern",
+        "concept",
+        "hook_strategy",
+        "story_strategy",
+        "payoff_strategy",
+        "cta_strategy",
+        "retention_strategy",
+        "visual_style",
+      ],
+    },
+
+    voice: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        needed: { type: "boolean" },
+        reason: { type: "string" },
+        source: {
+          type: "string",
+          enum: ["USER_RECORDING", "AI_VOICE", "NONE"],
+        },
+        language: { type: "string" },
+        delivery: { type: "string" },
+        script: { type: "string" },
+        estimated_duration_seconds: { type: "number" },
+      },
+      required: [
+        "needed",
+        "reason",
+        "source",
+        "language",
+        "delivery",
+        "script",
+        "estimated_duration_seconds",
+      ],
+    },
+
+    music: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        needed: { type: "boolean" },
+        mood: { type: "string" },
+        energy: { type: "string" },
+        purpose: { type: "string" },
+        duck_under_voice: { type: "boolean" },
+      },
+      required: [
+        "needed",
+        "mood",
+        "energy",
+        "purpose",
+        "duck_under_voice",
+      ],
+    },
+
+    sfx: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        needed: { type: "boolean" },
+        strategy: { type: "string" },
+        moments: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              type: { type: "string" },
+              purpose: { type: "string" },
+              beat_id: { type: "string" },
+            },
+            required: ["type", "purpose", "beat_id"],
+          },
+        },
+      },
+      required: ["needed", "strategy", "moments"],
+    },
+
+    captions_blueprint: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        needed: { type: "boolean" },
+        style: { type: "string" },
+        placement: { type: "string" },
+        emphasis_strategy: { type: "string" },
+      },
+      required: [
+        "needed",
+        "style",
+        "placement",
+        "emphasis_strategy",
+      ],
+    },
+
+    text_overlays: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          beat_id: { type: "string" },
+          text: { type: "string" },
+          purpose: { type: "string" },
+          priority: {
+            type: "string",
+            enum: ["PRIMARY", "SECONDARY"],
+          },
+        },
+        required: ["beat_id", "text", "purpose", "priority"],
+      },
+    },
+
+    timeline: {
+      type: "array",
+      minItems: 1,
+      maxItems: 12,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          beat_id: { type: "string" },
+          start: { type: "number" },
+          end: { type: "number" },
+          purpose: { type: "string" },
+          visual_goal: { type: "string" },
+          ideal_shot: { type: "string" },
+          voice_line: { type: "string" },
+          on_screen_text: { type: "string" },
+          sfx: { type: "string" },
+          transition: {
+            type: "string",
+            enum: [
+              "CUT",
+              "MATCH_CUT",
+              "SMASH_CUT",
+              "DISSOLVE",
+              "NONE",
+            ],
+          },
+          pacing: { type: "string" },
+        },
+        required: [
+          "beat_id",
+          "start",
+          "end",
+          "purpose",
+          "visual_goal",
+          "ideal_shot",
+          "voice_line",
+          "on_screen_text",
+          "sfx",
+          "transition",
+          "pacing",
+        ],
+      },
+    },
+
+    // These are the shots we ideally need. They are NOT yet matched to
+    // uploaded files. That happens in the next stage.
+    shot_requirements: {
+      type: "array",
+      minItems: 1,
+      maxItems: 12,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          shot_id: { type: "string" },
+          beat_id: { type: "string" },
+          importance: {
+            type: "string",
+            enum: ["MUST_HAVE", "PREFERRED", "OPTIONAL"],
+          },
+          description: { type: "string" },
+          subject: { type: "string" },
+          framing: { type: "string", minLength: 60 },
+          camera_action: { type: "string" },
+          usable_for: { type: "string" },
+        },
+        required: [
+          "shot_id",
+          "beat_id",
+          "importance",
+          "description",
+          "subject",
+          "framing",
+          "camera_action",
+          "usable_for",
+        ],
+      },
+    },
+
+    final_cta: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        spoken: { type: "string" },
+        on_screen: { type: "string" },
+        visual: { type: "string" },
+      },
+      required: ["spoken", "on_screen", "visual"],
+    },
+
+    quality_requirements: {
+      type: "array",
+      items: { type: "string" },
+    },
+
+    // Existing UI expects this array.
+    shots: {
+      type: "array",
+      minItems: 3,
+      maxItems: 8,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          number: { type: "string" },
+          title: { type: "string" },
+          duration: { type: "string" },
+          description: { type: "string" },
+          instruction: { type: "string", minLength: 500 },
+          camera_movement: { type: "string", minLength: 60 },
+          framing: { type: "string" },
+          role: { type: "string" },
+          why: { type: "string", minLength: 60 },
+          audio: { type: "string" },
+          on_screen_text: { type: "string" },
+        },
+        required: [
+          "number",
+          "title",
+          "duration",
+          "description",
+          "instruction",
+          "camera_movement",
+          "framing",
+          "role",
+          "why",
+          "audio",
+          "on_screen_text",
+        ],
+      },
+    },
+  },
+
+  required: [
+    "title",
+    "duration_seconds",
+    "format",
+    "goal",
+    "style",
+    "recommendation",
+    "script",
+    "audio",
+    "captions",
+    "creative_brief",
+    "creative_strategy",
+    "voice",
+    "music",
+    "sfx",
+    "captions_blueprint",
+    "text_overlays",
+    "timeline",
+    "shot_requirements",
+    "final_cta",
+    "quality_requirements",
+    "shots",
+  ],
+};
+
+export async function POST(request: Request) {
+  try {
+    if (!apiKey || !openai) {
+      return NextResponse.json(
+        {
+          error:
+            "OPENAI_API_KEY is missing. Add it to .env.local and restart the server.",
+        },
+        { status: 500 }
+      );
+    }
+
+    const body = await request.json();
+
+    const brief = body?.brief;
+    const suppliedBrief =
+      body?.creative_brief && typeof body.creative_brief === "object"
+        ? body.creative_brief
+        : {};
+
+    if (!brief || typeof brief !== "string") {
+      return NextResponse.json(
+        { error: "A content brief is required." },
+        { status: 400 }
+      );
+    }
+
+    const businessProfile =
+      body?.business_profile && typeof body.business_profile === "object"
+        ? body.business_profile
+        : {};
+
+    const business = {
+      name: String(businessProfile.name || ""),
+      category: String(businessProfile.category || ""),
+      description: String(businessProfile.description || ""),
+      location: String(businessProfile.location || ""),
+      audience: String(businessProfile.audience || suppliedBrief.audience || ""),
+      website: String(businessProfile.website || ""),
+      instagram: String(businessProfile.instagram || ""),
+      tiktok: String(businessProfile.tiktok || ""),
+      services: String(businessProfile.services || ""),
+      offers: String(businessProfile.offers || ""),
+      usp: String(businessProfile.usp || ""),
+      personality: String(businessProfile.personality || ""),
+      primary_color: String(businessProfile.primary_color || ""),
+      secondary_color: String(businessProfile.secondary_color || ""),
+      font_family: String(businessProfile.font_family || ""),
+      logo_url: String(businessProfile.logo_url || ""),
+    };
+
+    const systemPrompt = `
+You are ATLAS SCENE â€” the IDEAL CREATIVE DIRECTOR.
+
+Your job at this stage is NOT to edit footage.
+
+You are working BEFORE the user uploads real footage.
+
+You must first design the BEST POSSIBLE finished short-form Reel for the
+business objective. This output becomes the IDEAL BLUEPRINT.
+
+Later, another ATLAS stage will receive real user footage, compare it against
+this blueprint, and REMAKE the blueprint around the footage that actually exists.
+
+Therefore:
+- Do NOT pretend that any real clip exists.
+- Do NOT assign real filenames.
+- Do NOT invent footage timestamps.
+- Describe the ideal shots that would be needed.
+- Make every creative decision concrete enough for a later AI system to compare
+  against real footage.
+
+
+SHOOTING INSTRUCTIONS â€” CRITICAL USER EXPERIENCE:
+The person filming may know NOTHING about video production. The shot list must be executable directly from a phone screen.
+
+Keep the requested number of SOURCE CLIPS low:
+- Normally 4â€“6 source clips for a 12â€“20 second Reel.
+- Use 7â€“8 only when genuinely necessary.
+- Do not request multiple redundant angles just to have more footage.
+The goal is minimum filming effort with maximum usable material.
+
+IMPORTANT:
+The "duration" field is the RAW RECORDING duration. Ask the user to record normally 5â€“8 seconds per source shot so ATLAS has handles and can extract multiple moments later. The final edit duration will be much shorter.
+
+FOR EVERY SHOT, write ALL of these as concrete, beginner-friendly instructions:
+1. WHAT TO FILM â€” exactly what object/person/action should be visible.
+2. PHONE SETUP â€” vertical 9:16, rear camera when possible, approximate distance and height, and where the subject sits in frame.
+3. START â€” what should already be ready before pressing record.
+4. ACTION â€” exactly what the person should do during the recording, including direction and speed.
+5. END â€” how/when to finish the take.
+6. CAMERA MOVEMENT â€” exact movement, starting position, ending position, and speed; if static, explicitly say "keep the phone still".
+7. FRAMING â€” what must be fully visible and what must not be cropped.
+8. LIGHT â€” simple practical lighting advice appropriate to the situation.
+9. AUDIO â€” whether to preserve natural sound; do not request spoken dialogue unless genuinely needed.
+10. AVOID â€” the 2â€“4 most likely beginner mistakes.
+11. WHY â€” explain the business/editorial purpose in plain language.
+12. RECORDING LENGTH â€” tell them how many seconds of RAW footage to record.
+
+The \`instruction\` field MUST visibly contain these exact labels, in this exact order:
+WHAT TO FILM:
+PHONE SETUP:
+START:
+ACTION:
+END:
+LIGHT:
+AVOID:
+RECORD:
+Each label must be followed by concrete physical instructions. Do not compress the answer into a generic paragraph. A beginner must be able to execute the shot without asking what to do next.
+
+Do NOT use vague filmmaking language by itself:
+- "close-up"
+- "cinematic"
+- "slow push-in"
+- "nice shot"
+- "capture the product"
+If you use one of these terms, immediately translate it into physical instructions a beginner can follow.
+
+BAD:
+"Close-up. Slow push-in."
+
+GOOD:
+"Hold the phone vertically about 30â€“40 cm from the product at product height. Press record while the product is already centered. Stay still for 1 second, then move the phone slowly 15â€“20 cm closer over about 3 seconds, keeping the full product visible. Stay still for 1 more second. Do not use digital zoom."
+
+Each source clip should have a clear job in the final Reel: HOOK, PROOF, PROCESS, TEXTURE, HUMAN/ACTION, PAYOFF or CTA.
+
+The checklist should feel like:
+"Do this â†’ now do this â†’ now do this."
+The user should not need to ask how to execute a shot.
+
+Do not increase the amount of work for the user just to make the AI's job easier. The AI editor must do the hard work later.
+
+You are responsible for deciding:
+
+1. What the Reel is trying to achieve.
+2. What the viewer should feel, understand and do.
+3. The creative concept.
+4. The hook.
+5. The story.
+6. The payoff.
+7. The CTA.
+8. Whether voiceover is actually useful.
+9. If voiceover is useful, write the COMPLETE word-for-word spoken script.
+10. Whether the user should record the voice or ATLAS should generate it.
+11. Music direction.
+12. SFX direction.
+13. Caption strategy.
+14. Exact on-screen text, including offers/prices when supplied.
+15. The ideal second-by-second timeline.
+16. The ideal shot requirements.
+17. The quality requirements for the final Reel.
+
+VOICEOVER RULE:
+Do not write "mention the offer" or "talk about the product".
+Write the actual words that should be spoken.
+
+If voiceover is not useful, set needed=false, source=NONE and script="".
+
+Do not invent business facts, prices, dates, offers, names or claims that were
+not supplied by the user.
+
+Treat the STRUCTURED CREATIVE BRIEF as the source of truth.
+Preserve its objective, audience, desired action, tone, pacing and target duration.
+
+CREATIVE CONTROL FIELDS:
+The structured brief may also contain:
+- editing_style: Cinematic Commercial, Fast Viral, Luxury / Premium, UGC / Authentic, or Product Launch.
+- hook_priority: Visual Shock, Product Beauty, Price / Offer, Human Reaction, or Curiosity.
+
+Use these two fields as explicit creative direction when designing the ideal blueprint.
+Editing style should influence shot design, pacing, camera movement, typography, transitions,
+SFX and overall finish. Hook priority should determine what the first 1â€“1.5 seconds must accomplish.
+Do not invent facts to satisfy a hook priority; choose the strongest truthful visual concept available.
+
+The target duration is a hard creative constraint. Build the timeline to cover
+approximately the requested duration.
+
+Every timeline beat must have:
+- visual purpose
+- ideal shot
+- voice line
+- on-screen text
+- SFX decision
+- transition decision
+- pacing
+
+SCENARIO CONSISTENCY:
+Every beat must serve the selected primary scenario. Do not drift into a generic
+montage halfway through the Reel. The payoff and CTA must be logical consequences
+of the scenario's mechanism.
+
+Every shot requirement must say what should physically be filmed on a normal
+smartphone.
+
+IMPORTANT:
+SCENARIO ENGINE â€” MANDATORY:
+
+Before writing the Reel, classify the request into ONE PRIMARY CREATIVE SCENARIO.
+Do not mix unrelated scenarios. A secondary mechanism may be used only when it
+strengthens the primary scenario.
+
+Choose the scenario from this library:
+
+1. TRANSFORMATION
+Use when the business can visibly show a meaningful before -> process -> after
+change. Pattern: imperfect state -> tension -> intervention -> reveal -> CTA.
+
+2. PROBLEM -> SOLUTION
+Use when the audience has a clear pain point and the service directly solves it.
+Pattern: audience pain -> consequence -> intervention -> result -> action.
+
+3. REVEAL / VISUAL SHOCK
+Use when the strongest asset is an immediately striking visual result.
+Pattern: visual shock -> identify -> proof -> meaning -> CTA. The first 1â€“1.5
+seconds must carry the idea visually.
+
+4. PROCESS / CRAFT
+Use when workmanship itself is persuasive.
+Pattern: precise action -> detail -> detail -> controlled process -> finished
+result -> CTA. Focus on real hands, tools, technique and care.
+
+5. PROOF / DEMONSTRATION
+Use when the service benefit can be visibly demonstrated.
+Pattern: question/claim -> test or demonstration -> observable evidence ->
+interpretation -> CTA. Never fabricate test results.
+
+6. EDUCATIONAL / MYTH-BUST
+Use when the audience needs to understand why a service matters.
+Pattern: surprising truth/question -> explanation -> visual example -> takeaway ->
+CTA. Facts must come from the supplied business profile or brief.
+
+7. COMPARISON
+Use only when two states, methods, surfaces, options or outcomes are genuinely
+available from the brief. Pattern: A vs B -> meaningful difference -> conclusion ->
+CTA. Never fabricate a comparison.
+
+8. PREMIUM / DESIRE
+Use when the objective is to make the audience desire the business, service or
+finished result. Pattern: aspiration -> sensory detail -> craftsmanship -> hero
+result -> CTA. Avoid empty "luxury" language.
+
+9. OFFER / CONVERSION
+Use when a concrete offer, price, promotion, package or booking incentive is
+actually supplied. Pattern: offer hook -> what is included -> value -> urgency
+only if supplied -> precise CTA. Never invent scarcity, discounts or deadlines.
+
+10. TRUST / SOCIAL PROOF
+Use when reviews, customer reactions, credentials, track record or real customer
+evidence is supplied. Pattern: evidence -> context -> service -> result -> CTA.
+Never invent testimonials, ratings, years, customer counts or certifications.
+
+11. LOCAL / DISCOVERY
+Use when the goal is local awareness or discovery. Pattern: local relevance ->
+service/value -> visual proof -> business identity -> CTA. Only use supplied
+location information.
+
+12. MAINTENANCE / LONG-TERM VALUE
+Use when maintenance, protection or recurring care is actually part of the
+business and relevant to the objective. Pattern: ownership problem -> repeated
+wear/care -> protection or maintenance -> easier ownership -> CTA. Do not invent
+durability periods or guarantees.
+
+SCENARIO SELECTION RULES:
+- Choose based on OBJECTIVE first, OFFER second, and the strongest truthful visual
+  mechanism third.
+- If booking a specific service is the objective, that service remains the
+  narrative center.
+- Use OFFER / CONVERSION only when the supplied offer is central.
+- Use TRUST / SOCIAL PROOF only when real evidence is supplied.
+- Do not default to TRANSFORMATION for every detailing request.
+- Do not default to PREMIUM / DESIRE just because the brand says "premium".
+- Do not default to REVEAL just because the finished product is beautiful.
+- The selected scenario must change the actual hook, story, proof mechanism and
+  CTAâ€”not merely the label.
+- The same business must be able to receive materially different creative
+  structures when objective, service or audience changes.
+
+SCENARIO OUTPUT REQUIREMENT:
+creative_strategy.scenario_type = the exact selected scenario name.
+creative_strategy.scenario_reason = why it is the best fit using only supplied
+business/brief information.
+creative_strategy.scenario_pattern = the concrete narrative pattern ATLAS will
+follow.
+
+SCENARIO QUALITY GATE:
+Reject your own first idea if it is only:
+"show service -> show process -> show result -> say premium -> book".
+
+The final concept must contain a real creative mechanism: a visual test,
+transformation device, tension, narrative question, demonstration, comparison,
+sensory motif, educational reveal, local identity, offer mechanism, or another
+concrete mechanism supported by the brief.
+
+The result must be a complete creative plan, not just a script and not just a
+shooting list.
+
+The current frontend still uses the legacy script/audio/captions/shots fields,
+so populate those too. They must agree with the new Ideal Blueprint fields.
+
+Return ONLY the structured JSON object required by the application.
+
+BUSINESS CONTEXT â€” SOURCE OF TRUTH:
+${JSON.stringify(business, null, 2)}
+
+Use the supplied business context to make the creative specific to this business.
+Never replace it with a generic or invented business. Do not invent missing facts.
+
+USER REQUEST:
+${brief}
+
+STRUCTURED CREATIVE BRIEF:
+${JSON.stringify(suppliedBrief, null, 2)}
+`;
+
+    const response = await openai.responses.create({
+      model: "gpt-5.4-mini",
+      input: [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: brief,
+        },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "atlas_scene_ideal_blueprint",
+          strict: true,
+          schema: productionPlanSchema,
+        },
+      },
+    });
+
+    console.log("ATLAS DIRECTOR ROUTE: SHOOT-COACH-ACTIVE-FINAL");
+    const outputText = response.output_text;
+
+    if (!outputText) {
+      throw new Error("OpenAI returned an empty Ideal Blueprint.");
+    }
+
+    let productionPlan: any;
+
+    try {
+      productionPlan = JSON.parse(outputText);
+    } catch {
+      console.error("INVALID OPENAI OUTPUT:", outputText);
+      throw new Error("OpenAI returned invalid production data.");
+    }
+
+
+    const requiredShootLabels = [
+      "WHAT TO FILM:",
+      "PHONE SETUP:",
+      "START:",
+      "ACTION:",
+      "END:",
+      "LIGHT:",
+      "AVOID:",
+      "RECORD:",
+    ];
+
+    // Repair the legacy `instruction` string from the structured shot fields.
+    // This keeps the model focused on creative decisions while guaranteeing
+    // that the beginner-facing checklist always has the exact sections the UI
+    // expects. No second model call is needed.
+    if (Array.isArray(productionPlan?.shots)) {
+      productionPlan.shots = productionPlan.shots.map((shot: any) => {
+        const existing =
+          typeof shot?.instruction === "string"
+            ? shot.instruction.trim()
+            : "";
+
+        const hasAllLabels = requiredShootLabels.every((label) =>
+          existing.includes(label)
+        );
+
+        if (hasAllLabels && existing.length >= 500) {
+          return shot;
+        }
+
+        const subject = String(
+          shot?.description ||
+            shot?.title ||
+            "the main subject"
+        ).trim();
+
+        const framing = String(
+          shot?.framing ||
+            "Keep the full subject visible and leave a little space around it."
+        ).trim();
+
+        const movement = String(
+          shot?.camera_movement ||
+            "Keep the phone steady and make one slow, controlled movement."
+        ).trim();
+
+        const audio = String(
+          shot?.audio ||
+            "Keep natural sound only if it adds useful texture; otherwise record clean room sound."
+        ).trim();
+
+        const why = String(
+          shot?.why ||
+            "This shot must make the product immediately understandable and desirable."
+        ).trim();
+
+        const duration = String(
+          shot?.duration || "5â€“8 seconds"
+        ).trim();
+
+        const screenText = String(
+          shot?.on_screen_text || ""
+        ).trim();
+
+        const repairedInstruction = [
+          `WHAT TO FILM: Film ${subject}. Make the important visual detail obvious immediately and keep the subject clean and unobstructed.`,
+          `PHONE SETUP: Hold the phone vertically in 9:16. Use the rear camera when possible. ${framing} Keep the lens at approximately subject height unless the shot specifically needs a lower or higher angle.`,
+          `START: Before pressing record, place the subject exactly where you want it in frame, clean the lens, lock exposure/focus if your phone allows it, and make sure nothing important is cropped.`,
+          `ACTION: ${movement} Start the movement only after the shot is stable. Move smoothly and consistently rather than changing speed halfway through.`,
+          `END: Finish the movement cleanly, hold the final composition for about 1 second, and stop recording without tapping or shaking the phone.`,
+          `LIGHT: Use the brightest soft light available. Keep the main subject evenly visible, avoid harsh backlight, and do not let reflections or blown highlights hide the important detail.`,
+          `AVOID: Do not use digital zoom. Do not shake the phone, reframe during the take, cover the lens, or let hands/objects block the main subject. ${screenText ? `Leave enough clean space for the on-screen text "${screenText}".` : "Leave clean space if ATLAS later needs to add text."}`,
+          `RECORD: Record one continuous RAW take for ${duration}. Keep recording for the full requested duration so ATLAS has handles to cut from later.`,
+          `AUDIO: ${audio}`,
+          `WHY: ${why}`,
+        ].join("\n\n");
+
+        return {
+          ...shot,
+          instruction: repairedInstruction,
+        };
+      });
+    }
+
+    // Defensive normalization. This keeps the existing UI stable while the
+    // new blueprint becomes the source of truth for later pipeline stages.
+    productionPlan.script = {
+      hook: String(productionPlan.script?.hook || ""),
+      setup: String(productionPlan.script?.setup || ""),
+      development: String(productionPlan.script?.development || ""),
+      payoff: String(productionPlan.script?.payoff || ""),
+      ending: String(productionPlan.script?.ending || ""),
+      voiceover: String(
+        productionPlan.voice?.script ||
+          productionPlan.script?.voiceover ||
+          ""
+      ),
+    };
+
+    productionPlan.audio = {
+      music_mood: String(
+        productionPlan.music?.mood ||
+          productionPlan.audio?.music_mood ||
+          "Support the creative without overpowering speech"
+      ),
+      natural_sound: String(
+        productionPlan.audio?.natural_sound ||
+          "Use authentic source sound when it improves realism"
+      ),
+      sound_effects: String(
+        productionPlan.sfx?.strategy ||
+          productionPlan.audio?.sound_effects ||
+          ""
+      ),
+      voiceover: String(
+        productionPlan.voice?.script ||
+          productionPlan.audio?.voiceover ||
+          "None"
+      ),
+    };
+
+    productionPlan.captions = {
+      enabled: Boolean(
+        productionPlan.captions_blueprint?.needed ??
+          productionPlan.captions?.enabled
+      ),
+      style: String(
+        productionPlan.captions_blueprint?.style ||
+          productionPlan.captions?.style ||
+          "Clean social captions"
+      ),
+      strategy: String(
+        productionPlan.captions_blueprint?.emphasis_strategy ||
+          productionPlan.captions?.strategy ||
+          ""
+      ),
+    };
+
+    productionPlan.shots = Array.isArray(productionPlan.shots)
+      ? productionPlan.shots.map((shot: any) => ({
+          ...shot,
+          role: String(shot?.role || "STORY"),
+          why: String(
+            shot?.why ||
+              shot?.description ||
+              "Supports the creative objective"
+          ),
+          audio: String(
+            shot?.audio || "Capture clean natural sound"
+          ),
+          on_screen_text: String(
+            shot?.on_screen_text || ""
+          ),
+        }))
+      : [];
+
+    productionPlan.creative_brief = {
+      raw_request: String(
+        productionPlan.creative_brief?.raw_request || brief
+      ),
+      platform: String(
+        productionPlan.creative_brief?.platform ||
+          suppliedBrief.platform ||
+          "Instagram Reels / TikTok"
+      ),
+      objective: String(
+        productionPlan.creative_brief?.objective ||
+          suppliedBrief.objective ||
+          productionPlan.goal ||
+          "Drive attention and action"
+      ),
+      audience: String(
+        productionPlan.creative_brief?.audience ||
+          suppliedBrief.audience ||
+          "Social media viewers"
+      ),
+      desired_action: String(
+        productionPlan.creative_brief?.desired_action ||
+          suppliedBrief.desired_action ||
+          "Take the next business action"
+      ),
+      core_message: String(
+        productionPlan.creative_brief?.core_message ||
+          suppliedBrief.core_message ||
+          productionPlan.recommendation ||
+          ""
+      ),
+      tone: String(
+        productionPlan.creative_brief?.tone ||
+          suppliedBrief.tone ||
+          productionPlan.style ||
+          "Modern"
+      ),
+      pacing: String(
+        productionPlan.creative_brief?.pacing ||
+          suppliedBrief.pacing ||
+          "Fast"
+      ),
+      target_duration_seconds: Number(
+        productionPlan.creative_brief?.target_duration_seconds ||
+          suppliedBrief.target_duration_seconds ||
+          productionPlan.duration_seconds ||
+          15
+      ),
+      visual_style: String(
+        productionPlan.creative_brief?.visual_style ||
+          suppliedBrief.visual_style ||
+          productionPlan.style ||
+          "Social-first"
+      ),
+    };
+
+    console.log("================================");
+    console.log("ATLAS IDEAL BLUEPRINT READY");
+    console.log("================================");
+    console.log(
+      JSON.stringify(
+        {
+          title: productionPlan.title,
+          duration_seconds: productionPlan.duration_seconds,
+          voice: productionPlan.voice,
+          timeline: productionPlan.timeline,
+          shot_requirements: productionPlan.shot_requirements,
+        },
+        null,
+        2
+      )
+    );
+    console.log("================================");
+
+    return NextResponse.json(productionPlan);
+  } catch (error) {
+    console.error("ATLAS SCENE AI DIRECTOR ERROR:", error);
+
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Unknown AI Director error.";
+
+    return NextResponse.json(
+      { error: message },
+      { status: 500 }
+    );
+  }
+}
+
+==================== app/api/edit-director/route.ts ====================
+
+import OpenAI from "openai";
+import { NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+
+const apiKey = process.env.OPENAI_API_KEY;
+const openai = apiKey ? new OpenAI({ apiKey }) : null;
+
+const TRANSITIONS = [
+  "CUT", "FADE", "WHIP", "MATCH", "ZOOM", "PUNCH",
+  "SLIDE_LEFT", "SLIDE_RIGHT", "SLIDE_UP", "SLIDE_DOWN", "FLASH", "NONE",
+] as const;
+
+const MOTIONS = [
+  "STATIC", "PUSH_IN", "PULL_OUT", "PAN_LEFT", "PAN_RIGHT",
+  "TILT_UP", "TILT_DOWN", "HANDHELD", "DRIFT",
+] as const;
+
+const schema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    version: { type: "string" },
+    editorial_intent: { type: "string" },
+    hook_strategy: { type: "string" },
+    music_strategy: { type: "string" },
+    timeline: {
+      type: "array",
+      minItems: 7,
+      maxItems: 12,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: { type: "string" },
+          source_filename: { type: "string" },
+          source_start: { type: "number" },
+          source_end: { type: "number" },
+          role: { type: "string", enum: ["HOOK", "STORY", "PAYOFF", "CTA"] },
+          purpose: { type: "string" },
+          cut_reason: { type: "string" },
+          transition_in: { type: "string", enum: [...TRANSITIONS] },
+          transition_out: { type: "string", enum: [...TRANSITIONS] },
+          motion: { type: "string", enum: [...MOTIONS] },
+          zoom_start: { type: "number" },
+          zoom_end: { type: "number" },
+          speed: { type: "number" },
+          text: { type: "string" },
+          text_style: { type: "string", enum: ["NONE","HOOK","KINETIC","EMPHASIS","MINIMAL","PRICE","CTA","CAPTION"] },
+          text_animation: { type: "string", enum: ["NONE","POP","WORD_POP","SLIDE_UP","SLIDE_LEFT","SLIDE_RIGHT","FADE","SCALE"] },
+          text_position: { type: "string", enum: ["TOP","CENTER","BOTTOM","LOWER_THIRD"] },
+          emphasis_words: { type: "array", items: { type: "string" } },
+          sfx: { type: "array", items: { type: "string" } },
+          sfx_events: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                type: { type: "string" },
+                at: { type: "number" },
+                volume: { type: "number" },
+              },
+              required: ["type", "at", "volume"],
+            },
+          },
+          source_audio_volume: { type: "number" },
+          music_volume: { type: "number" },
+          color_treatment: { type: "string" },
+          crop_focus: {
+            type: "string",
+            enum: ["CENTER","FACE","PRODUCT","ACTION","TOP","BOTTOM","LEFT","RIGHT"],
+          },
+          editorial_score: { type: "number" },
+          beat_intent: { type: "string", enum: ["HOOK_IMPACT","PROBLEM","ACTION","PROOF","ESCALATION","TRANSFORMATION","HERO","CTA"] },
+          cut_on: { type: "string", enum: ["ACTION_PEAK","MOTION_MATCH","WORD_EMPHASIS","MUSIC_BEAT","REVEAL","BREATH","NONE"] },
+        },
+        required: [
+          "id","source_filename","source_start","source_end","role","purpose",
+          "cut_reason","transition_in","transition_out","motion","zoom_start",
+          "zoom_end","speed","text","text_style","text_animation","text_position",
+          "emphasis_words","sfx","sfx_events","source_audio_volume","music_volume",
+          "color_treatment","crop_focus","editorial_score","beat_intent","cut_on",
+        ],
+      },
+    },
+  },
+  required: ["version","editorial_intent","hook_strategy","music_strategy","timeline"],
+} as const;
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function cleanTransition(value: any) {
+  const v = String(value || "CUT").toUpperCase();
+  return (TRANSITIONS as readonly string[]).includes(v) ? v : "CUT";
+}
+
+function cleanMotion(value: any) {
+  const v = String(value || "STATIC").toUpperCase();
+  return (MOTIONS as readonly string[]).includes(v) ? v : "STATIC";
+}
+
+/**
+ * Deterministically repair source adjacency without changing source windows.
+ * CTA stays fixed as the final beat. A small DP over the <=11 non-CTA beats
+ * finds the lowest-displacement ordering that has no adjacent same-source
+ * beats and also avoids creating a CTA/source collision at the end.
+ */
+function repairAdjacentSourceDuplicates(timeline: any[]) {
+  if (timeline.length < 2) return [...timeline];
+
+  const ctaIndex = timeline.findIndex(
+    (x) => String(x?.role || "").toUpperCase() === "CTA",
+  );
+  const cta = ctaIndex >= 0 ? timeline[ctaIndex] : null;
+  const nonCta = timeline.filter((_, index) => index !== ctaIndex);
+
+  if (!cta) {
+    return repairSequence(nonCta, "");
+  }
+
+  if (nonCta.length === 0) return [cta];
+  return [...repairSequence(nonCta, String(cta.source_filename)), cta];
+}
+
+function repairSequence(items: any[], blockedFinalSource: string) {
+  const n = items.length;
+  if (n <= 1) {
+    if (n === 1 && blockedFinalSource && String(items[0]?.source_filename) === blockedFinalSource) {
+      throw new Error("AI Edit Director cannot place a non-CTA beat before CTA without adjacent duplicate source.");
+    }
+    return [...items];
+  }
+
+  const source = items.map((item) => String(item?.source_filename || ""));
+  const memo = new Map<string, number>();
+  const choice = new Map<string, number>();
+
+  const solve = (mask: number, lastIndex: number, position: number): number => {
+    if (position === n) return 0;
+    const key = `${mask}|${lastIndex}|${position}`;
+    const cached = memo.get(key);
+    if (cached !== undefined) return cached;
+
+    let best = Number.POSITIVE_INFINITY;
+    let bestIndex = -1;
+
+    for (let i = 0; i < n; i++) {
+      if (mask & (1 << i)) continue;
+      if (lastIndex >= 0 && source[i] === source[lastIndex]) continue;
+      if (position === n - 1 && blockedFinalSource && source[i] === blockedFinalSource) continue;
+
+      const tail = solve(mask | (1 << i), i, position + 1);
+      if (!Number.isFinite(tail)) continue;
+
+      // Minimize displacement from the AI's original order. The tiny
+      // tie-breaker keeps earlier source positions preferred.
+      const cost = Math.abs(i - position) * 1000 + i + tail;
+      if (cost < best) {
+        best = cost;
+        bestIndex = i;
+      }
+    }
+
+    memo.set(key, best);
+    if (bestIndex >= 0) choice.set(key, bestIndex);
+    return best;
+  };
+
+  if (!Number.isFinite(solve(0, -1, 0))) {
+    throw new Error("AI Edit Director could not deterministically repair adjacent duplicate sources without violating CTA order.");
+  }
+
+  const result: any[] = [];
+  let mask = 0;
+  let lastIndex = -1;
+
+  for (let position = 0; position < n; position++) {
+    const key = `${mask}|${lastIndex}|${position}`;
+    const index = choice.get(key);
+    if (index === undefined) {
+      throw new Error("AI Edit Director deterministic source repair produced no valid sequence.");
+    }
+    result.push(items[index]);
+    mask |= 1 << index;
+    lastIndex = index;
+  }
+
+  return result;
+}
+
+function normalizeTimeline(rawTimeline: any[], analyses: any[], targetDuration: number) {
+  const byName = new Map(analyses.map((x: any) => [String(x.filename), x]));
+  const usedWindows = new Set<string>();
+  const result: any[] = [];
+
+  for (const item of rawTimeline || []) {
+    const src: any = byName.get(String(item?.source_filename || ""));
+    if (!src) continue;
+
+    const duration = Number(src.duration) || 0;
+    if (duration < 0.25) continue;
+
+    const start = clamp(Number(item.source_start) || 0, 0, Math.max(0, duration - 0.20));
+    const end = clamp(
+      Number(item.source_end) || Math.min(duration, start + 1.2),
+      start + 0.25,
+      duration,
+    );
+
+    const sig = `${item.source_filename}|${start.toFixed(2)}|${end.toFixed(2)}`;
+    if (usedWindows.has(sig)) continue;
+
+    usedWindows.add(sig);
+
+    result.push({
+      ...item,
+      id: String(item.id || `beat-${result.length + 1}`),
+      source_filename: String(item.source_filename),
+      source_start: Number(start.toFixed(3)),
+      source_end: Number(end.toFixed(3)),
+      role: ["HOOK","STORY","PAYOFF","CTA"].includes(String(item.role)) ? item.role : "STORY",
+      transition_in: cleanTransition(item.transition_in),
+      transition_out: cleanTransition(item.transition_out),
+      motion: cleanMotion(item.motion),
+      zoom_start: clamp(Number(item.zoom_start) || 1, 1, 1.28),
+      zoom_end: clamp(Number(item.zoom_end) || 1.04, 1, 1.35),
+      speed: clamp(Number(item.speed) || 1, 0.75, 1.35),
+      source_audio_volume: clamp(Number(item.source_audio_volume) || 0, 0, 1),
+      music_volume: clamp(Number(item.music_volume) || 0.65, 0, 1),
+      editorial_score: clamp(Number(item.editorial_score) || 0, 0, 100),
+      beat_intent: ["HOOK_IMPACT","PROBLEM","ACTION","PROOF","ESCALATION","TRANSFORMATION","HERO","CTA"].includes(String(item.beat_intent)) ? item.beat_intent : (String(item.role) === "HOOK" ? "HOOK_IMPACT" : String(item.role) === "CTA" ? "CTA" : "ACTION"),
+      cut_on: ["ACTION_PEAK","MOTION_MATCH","WORD_EMPHASIS","MUSIC_BEAT","REVEAL","BREATH","NONE"].includes(String(item.cut_on)) ? item.cut_on : "ACTION_PEAK",
+      sfx_events: Array.isArray(item.sfx_events)
+        ? item.sfx_events.slice(0, 3).map((e: any) => ({
+            type: String(e?.type || "NONE"),
+            at: Math.max(0, Number(e?.at) || 0),
+            volume: clamp(Number(e?.volume) || 0.12, 0, 1),
+          }))
+        : [],
+    });
+  }
+
+  if (result.length < 7) {
+    throw new Error(
+      `AI Edit Director produced only ${result.length} valid beats after normalization; expected at least 7. Regenerate instead of degrading the edit.`,
+    );
+  }
+
+  const ctaIndexes = result
+    .map((x, index) => ({ role: String(x.role || "").toUpperCase(), index }))
+    .filter((x) => x.role === "CTA")
+    .map((x) => x.index);
+
+  if (ctaIndexes.length !== 1) {
+    throw new Error(
+      `AI Edit Director must produce exactly one CTA beat; found ${ctaIndexes.length}. Regenerate the timeline.`,
+    );
+  }
+
+  const ctaIndex = ctaIndexes[0];
+  if (ctaIndex !== result.length - 1) {
+    const [cta] = result.splice(ctaIndex, 1);
+    result.push(cta);
+  }
+
+  const repaired = repairAdjacentSourceDuplicates(result);
+
+  const target = clamp(Number(targetDuration) || 15, 8, 60);
+  const total = repaired.reduce(
+    (sum, x) => sum + Math.max(0, Number(x.source_end) - Number(x.source_start)),
+    0,
+  );
+
+  if (total < target * 0.90) {
+    let remaining = target - total;
+    for (let i = repaired.length - 1; i >= 0 && remaining > 0.02; i--) {
+      const shot = repaired[i];
+      const src: any = byName.get(shot.source_filename);
+      const sourceDuration = Number(src?.duration) || Number(shot.source_end);
+      const room = Math.max(0, sourceDuration - Number(shot.source_end));
+      const desired = i === repaired.length - 1 ? Math.max(0.8, remaining) : remaining;
+      const add = Math.min(room, desired);
+      if (add > 0) {
+        shot.source_end = Number((Number(shot.source_end) + add).toFixed(3));
+        remaining -= add;
+      }
+    }
+  }
+
+  const finalTotal = repaired.reduce(
+    (sum, x) => sum + Math.max(0, Number(x.source_end) - Number(x.source_start)),
+    0,
+  );
+
+  if (finalTotal < target * 0.90) {
+    throw new Error(
+      `AI Edit Director produced a destructive ${finalTotal.toFixed(2)}s timeline for a ${target.toFixed(2)}s target.`,
+    );
+  }
+
+  return repaired;
+}
+
+export async function POST(request: Request) {
+  try {
+    if (!openai || !apiKey) {
+      return NextResponse.json(
+        { error: "OPENAI_API_KEY is missing." },
+        { status: 500 },
+      );
+    }
+
+    const body = await request.json();
+
+    const brief = body?.creative_brief || {};
+    const master = body?.master_plan || {};
+    const analyses = Array.isArray(body?.clips) ? body.clips : [];
+    const matches = Array.isArray(body?.footage_matches) ? body.footage_matches : [];
+    const captions = Array.isArray(body?.captions) ? body.captions : [];
+    const review = body?.review || null;
+
+    const targetDuration = Number(
+      master?.target_duration_seconds ||
+      master?.total_duration_seconds ||
+      brief?.duration ||
+      15,
+    );
+
+    const revisionContext = review
+      ? `
+THIS IS A REVIEW-DRIVEN V2 PASS.
+
+The previous rendered cut was reviewed by a senior editor.
+Do not blindly preserve the old timeline.
+
+REVIEW:
+${JSON.stringify(review, null, 2)}
+
+Fix the actual problems identified by the reviewer.
+If the reviewer says the hook is weak, change the first visual beat.
+If pacing is flat, change beat durations and source moments.
+If shots are repetitive, change source/order/framing.
+If the hero/CTA is weak, move the strongest available final visual to the end.
+If typography or transitions are weak, change those dimensions too.
+
+The new timeline must be materially different where the review requires it.
+`
+      : `
+THIS IS THE FIRST EDIT PASS.
+Build the strongest publishable timeline from the available footage.
+`;
+
+    const prompt = `You are ATLAS AI EDIT DIRECTOR V3 â€” a senior commercial editor, trailer editor and short-form retention specialist.
+
+Your output is the executable creative timeline. The renderer will obey it literally. Do not produce a generic montage.
+
+ARCHITECTURE
+- Master Director = WHY / business story.
+- Vision = WHAT exists in the real footage.
+- You = HOW the edit feels: exact source windows, rhythm, cuts, motion, typography, sound cues and grade.
+- Renderer = deterministic execution only.
+
+QUALITY TARGET
+The user should watch the finished Reel and immediately think: â€œThis was edited by a real professional.â€
+
+EDITORIAL RULES
+1. HOOK: first 0.0â€“0.9s must be the strongest visual moment. Prefer action, texture, contrast, transformation or an unusual detail. Never spend the opening establishing the scene unless it is genuinely exceptional.
+2. RHYTHM: for ~15s use 7â€“10 meaningful beats when footage supports it. Typical beat 0.65â€“1.9s. Hero 1.5â€“2.6s. CTA 2.0â€“3.2s. Do not stretch weak footage to hit duration.
+3. CUT ON SOMETHING: every cut should be motivated by ACTION_PEAK, MOTION_MATCH, WORD_EMPHASIS, MUSIC_BEAT, REVEAL or BREATH. Do not cut merely because a clip ended.
+4. SEQUENCE: build escalation. A strong default for service footage is HOOK â†’ PROBLEM â†’ ACTION â†’ PROOF â†’ ESCALATION â†’ TRANSFORMATION â†’ HERO â†’ CTA, but rebuild when the real footage demands it.
+5. SOURCE SELECTION: choose the strongest moment inside each real source, not arbitrary starts. Never invent timestamps. Never repeat the same exact window. Avoid adjacent same-source beats.
+6. VISUAL VARIETY: deliberately alternate composition, scale and motion. Do not make every beat a push-in. Use static beauty shots when they are stronger than motion.
+7. MOTION: zoom_start/zoom_end are intentional camera decisions. PUSH_IN should normally increase scale, PULL_OUT decrease, pans should be reserved for directional movement.
+8. TRANSITIONS: CUT is dominant. Use MATCH/WHIP/PUNCH/FLASH/ZOOM only when the visual handoff earns it. Maximum 2 non-CUT transitions in a 15s cut unless the concept truly requires more.
+9. TEXT: typography is a designed hierarchy. Usually text on HOOK + one proof/value beat + CTA, not every shot. Keep it short enough to read at phone speed. Never invent claims.
+10. AUDIO: if source audio contains useful physical sound, preserve it selectively. Voice wins. Music supports. SFX should land on visible actions or editorial impacts.
+11. COLOR: choose a per-shot color_treatment such as NATURAL, CLEAN_PREMIUM, CRISP_DETAIL, DARK_LUXURY, PUNCHY, WARM, or COOL. The grade must support the material; do not make every shot look identical.
+12. CTA: when the brief has a booking/purchase/contact objective, you MUST output exactly ONE beat with role=CTA. It MUST be the final timeline beat and use the strongest clean hero frame with enough reading time. Never omit CTA, never label PAYOFF as CTA, and never finish on PAYOFF.
+13. BEAT COUNT: for a ~15s reel, output 7â€“10 distinct executable beats. If a candidate is weak, replace it with another real source window; do not reduce the timeline to 5 beats.
+14. NO TEMPLATE FEEL: never use identical motion + text + SFX patterns repeatedly. Every beat needs a distinct editorial job.
+
+SFX VOCABULARY
+HOOK_IMPACT, WHOOSH, WATER, FOAM, WIPE, MACHINE, REVEAL_IMPACT, CTA_HIT, CLICK, POP, NONE. Use 0â€“2 cues per beat.
+
+REVISION RULE
+If REVIEW is present, treat it as a real editorial note from a senior reviewer. Fix the specific failure, not just the metadata. Prefer a materially better first second, stronger action peaks, better rhythm, cleaner typography and stronger payoff over cosmetic changes. Never make a revision merely different; make it better.
+
+${revisionContext}
+
+CREATIVE BRIEF:
+${JSON.stringify(brief, null, 2)}
+
+MASTER DIRECTOR PLAN:
+${JSON.stringify(master, null, 2)}
+
+VISION FOOTAGE:
+${JSON.stringify(analyses, null, 2)}
+
+FOOTAGE MATCHES:
+${JSON.stringify(matches, null, 2)}
+
+CAPTIONS:
+${JSON.stringify(captions, null, 2)}
+
+Before returning JSON, internally verify:
+- first beat is genuinely the strongest hook
+- 7â€“10 beats for a usable ~15s source set
+- exactly one CTA beat exists and it is the final beat
+- no adjacent duplicate source
+- no exact repeated source window
+- at least 4 unique source files when available
+- CTA is last when required
+- total visual duration is within 90â€“103% of target when enough footage exists
+- at least 3 distinct motion treatments when footage supports it
+- no more than 2 non-CUT transitions unless strongly justified
+- text is sparse and readable
+- SFX are motivated by visible action
+- no invented claims
+
+Return ONLY JSON matching the schema.`;
+
+    const createPlan = async (extraInstruction = "") => {
+      const response = await openai.responses.create({
+        model: "gpt-5.4-mini",
+        store: false,
+        input: [{
+          role: "user",
+          content: `${prompt}${extraInstruction ? `\n\nTARGETED REGENERATION INSTRUCTION:\n${extraInstruction}` : ""}`,
+        }],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "atlas_ai_edit_director_v2",
+            strict: true,
+            schema,
+          },
+        },
+      });
+
+      if (!response.output_text) {
+        throw new Error("AI Edit Director returned no plan.");
+      }
+
+      return JSON.parse(response.output_text);
+    };
+
+    let raw: any;
+    let timeline: any[];
+
+    try {
+      raw = await createPlan();
+      timeline = normalizeTimeline(
+        Array.isArray(raw.timeline) ? raw.timeline : [],
+        analyses,
+        targetDuration,
+      );
+    } catch (error: any) {
+      const message = String(error?.message || error || "");
+
+      // Exactly one targeted regeneration is allowed for CTA contract failure.
+      // The regenerated plan is passed through normalizeTimeline again, so the
+      // strict CTA/source/timing validation is never bypassed.
+      if (!message.includes("exactly one CTA")) throw error;
+
+      console.warn("[ATLAS EDIT DIRECTOR] CTA contract failed; targeted regeneration 1/1");
+      raw = await createPlan(
+        "Regenerate the entire timeline. The previous response violated the CTA contract. Output exactly one beat with role=CTA, and it must be the final beat. Do not omit CTA and do not relabel another role after generation.",
+      );
+      timeline = normalizeTimeline(
+        Array.isArray(raw.timeline) ? raw.timeline : [],
+        analyses,
+        targetDuration,
+      );
+    }
+
+    const uniqueSources = new Set(
+      timeline.map((x) => String(x.source_filename)),
+    ).size;
+
+    const sameAdjacent = timeline.filter(
+      (x, i) => i > 0 && x.source_filename === timeline[i - 1].source_filename,
+    ).length;
+
+    // Strict invariant: repair must actually succeed. Never silently degrade
+    // or accept an invalid timeline after deterministic repair.
+    if (sameAdjacent > 0) {
+      throw new Error("AI Edit Director produced adjacent duplicate sources after deterministic repair.");
+    }
+
+    if (uniqueSources < Math.min(4, analyses.length)) {
+      console.warn(
+        `[ATLAS EDIT DIRECTOR] low source diversity: ${uniqueSources}/${Math.min(4, analyses.length)}`,
+      );
+    }
+
+    return NextResponse.json({
+      success: true,
+      version: "2.0",
+      editorial_intent: String(raw.editorial_intent || ""),
+      hook_strategy: String(raw.hook_strategy || ""),
+      music_strategy: String(raw.music_strategy || ""),
+      timeline,
+      quality: {
+        uniqueSources,
+        beats: timeline.length,
+        adjacentDuplicateSources: sameAdjacent,
+        targetDuration: targetDuration,
+        actualDuration: Number(
+          timeline
+            .reduce(
+              (sum, beat) =>
+                sum +
+                Math.max(
+                  0,
+                  Number(beat.source_end) - Number(beat.source_start),
+                ),
+              0,
+            )
+            .toFixed(2),
+        ),
+      },
+    });
+  } catch (error: any) {
+    console.error("ATLAS AI EDIT DIRECTOR V2 ERROR", error);
+    return NextResponse.json(
+      { error: error?.message || "AI Edit Director failed." },
+      { status: 500 },
+    );
+  }
+}
+
+==================== app/api/master-plan/route.ts ====================
+
+import OpenAI from "openai";
+import { NextResponse } from "next/server";
+
+export const runtime = "nodejs";
+
+type ClipAnalysis = {
+  clip: number;
+  filename: string;
+  duration?: number;
+  score: number;
+  verdict: string;
+  shot_type: string;
+  reason: string;
+  strengths?: string[];
+  problems?: string[];
+  recommended_use?: string;
+  suggested_start?: number;
+  suggested_end?: number;
+};
+
+type CaptionWord = {
+  word: string;
+  start: number;
+  end: number;
+};
+
+type CaptionSegment = {
+  id: string;
+  filename: string;
+  start: number;
+  end: number;
+  text: string;
+  words?: CaptionWord[];
+};
+
+type MasterShot = {
+  id: string;
+  role: "HOOK" | "STORY" | "PAYOFF" | "CTA";
+  source_filename: string;
+  start: number;
+  end: number;
+  purpose: string;
+  visual_action: string;
+  editorial_score: number;
+  selection_reason: string;
+  speech_segment_ids: string[];
+  speech_text: string;
+  visual_treatment: string;
+  crop: "NONE" | "CENTER" | "FACE" | "PRODUCT" | "ACTION";
+  zoom: number;
+  speed?: number;
+  motion?: string;
+  transition_in: "CUT" | "DISSOLVE" | "WHIP" | "MATCH" | "ZOOM" | "PUNCH" | "SLIDE_LEFT" | "SLIDE_RIGHT" | "SLIDE_UP" | "SLIDE_DOWN" | "FLASH" | "NONE";
+  transition_out: "CUT" | "DISSOLVE" | "WHIP" | "MATCH" | "ZOOM" | "PUNCH" | "SLIDE_LEFT" | "SLIDE_RIGHT" | "SLIDE_UP" | "SLIDE_DOWN" | "FLASH" | "NONE";
+  on_screen_text: string;
+  caption_mode: "NONE" | "WORD_BY_WORD" | "PHRASE";
+  caption_emphasis: string[];
+  music_intensity: number;
+  voice_priority: number;
+  text_style: string;
+  text_animation: string;
+  text_position: string;
+  sfx: string[];
+};
+
+const apiKey = process.env.OPENAI_API_KEY;
+const openai = apiKey ? new OpenAI({ apiKey }) : null;
+
+const masterPlanSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    title: { type: "string" },
+    objective: { type: "string" },
+    audience_takeaway: { type: "string" },
+    core_message: { type: "string" },
+    editorial_strategy: { type: "string" },
+    brief_alignment: { type: "string" },
+    target_duration_seconds: { type: "number" },
+    script: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        hook: { type: "string" },
+        setup: { type: "string" },
+        development: { type: "string" },
+        payoff: { type: "string" },
+        ending: { type: "string" },
+      },
+      required: ["hook", "setup", "development", "payoff", "ending"],
+    },
+    global_audio: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        music_mood: { type: "string" },
+        music_intensity: { type: "number" },
+        voice_priority: { type: "number" },
+        duck_music_under_speech: { type: "boolean" },
+        target_lufs: { type: "number" },
+      },
+      required: [
+        "music_mood",
+        "music_intensity",
+        "voice_priority",
+        "duck_music_under_speech",
+        "target_lufs",
+      ],
+    },
+    global_captions: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        enabled: { type: "boolean" },
+        style: { type: "string" },
+        max_words_per_chunk: { type: "integer" },
+        emphasis_words: { type: "array", items: { type: "string" } },
+        position: { type: "string" },
+      },
+      required: [
+        "enabled",
+        "style",
+        "max_words_per_chunk",
+        "emphasis_words",
+        "position",
+      ],
+    },
+    remake: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        decision: {
+          type: "string",
+          enum: ["KEEP", "ADAPT", "REBUILD"],
+        },
+        summary: { type: "string" },
+        what_survives_from_ideal: {
+          type: "array",
+          items: { type: "string" },
+        },
+        what_changed: {
+          type: "array",
+          items: { type: "string" },
+        },
+        missing_ideal_shots: {
+          type: "array",
+          items: { type: "string" },
+        },
+        footage_strengths: {
+          type: "array",
+          items: { type: "string" },
+        },
+        footage_problems: {
+          type: "array",
+          items: { type: "string" },
+        },
+        voice: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            needed: { type: "boolean" },
+            source: {
+              type: "string",
+              enum: ["USER_RECORDING", "AI_VOICE", "NONE"],
+            },
+            reason: { type: "string" },
+            script: { type: "string" },
+          },
+          required: ["needed", "source", "reason", "script"],
+        },
+        revised_timeline: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              beat_id: { type: "string" },
+              start: { type: "number" },
+              end: { type: "number" },
+              purpose: { type: "string" },
+              source_filename: { type: "string" },
+              reason_for_change: { type: "string" },
+            },
+            required: [
+              "beat_id",
+              "start",
+              "end",
+              "purpose",
+              "source_filename",
+              "reason_for_change",
+            ],
+          },
+        },
+      },
+      required: [
+        "decision",
+        "summary",
+        "what_survives_from_ideal",
+        "what_changed",
+        "missing_ideal_shots",
+        "footage_strengths",
+        "footage_problems",
+        "voice",
+        "revised_timeline",
+      ],
+    },
+    shots: {
+      type: "array",
+      minItems: 6,
+      maxItems: 9,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          id: { type: "string" },
+          role: { type: "string", enum: ["HOOK", "STORY", "PAYOFF", "CTA"] },
+          source_filename: { type: "string" },
+          start: { type: "number" },
+          end: { type: "number" },
+          purpose: { type: "string" },
+          visual_action: { type: "string" },
+          editorial_score: { type: "number" },
+          selection_reason: { type: "string" },
+          speech_segment_ids: { type: "array", items: { type: "string" } },
+          visual_treatment: { type: "string" },
+          crop: {
+            type: "string",
+            enum: ["NONE", "CENTER", "FACE", "PRODUCT", "ACTION"],
+          },
+          zoom: { type: "number" },
+          speed: { type: "number" },
+          motion: { type: "string" },
+          transition_in: {
+            type: "string",
+            enum: ["CUT", "DISSOLVE", "WHIP", "MATCH", "ZOOM", "PUNCH", "SLIDE_LEFT", "SLIDE_RIGHT", "SLIDE_UP", "SLIDE_DOWN", "FLASH", "NONE"],
+          },
+          transition_out: {
+            type: "string",
+            enum: ["CUT", "DISSOLVE", "WHIP", "MATCH", "ZOOM", "PUNCH", "SLIDE_LEFT", "SLIDE_RIGHT", "SLIDE_UP", "SLIDE_DOWN", "FLASH", "NONE"],
+          },
+          on_screen_text: { type: "string" },
+          caption_mode: {
+            type: "string",
+            enum: ["NONE", "WORD_BY_WORD", "PHRASE"],
+          },
+          caption_emphasis: { type: "array", items: { type: "string" } },
+          music_intensity: { type: "number" },
+          voice_priority: { type: "number" },
+          text_style: { type: "string" },
+          text_animation: { type: "string" },
+          text_position: { type: "string" },
+          sfx: { type: "array", items: { type: "string" } },
+        },
+        required: [
+          "id",
+          "role",
+          "source_filename",
+          "start",
+          "end",
+          "purpose",
+          "visual_action",
+          "editorial_score",
+          "selection_reason",
+          "speech_segment_ids",
+          "visual_treatment",
+          "crop",
+          "zoom",
+          "speed",
+          "motion",
+          "transition_in",
+          "transition_out",
+          "on_screen_text",
+          "caption_mode",
+          "caption_emphasis",
+          "music_intensity",
+          "voice_priority",
+          "text_style",
+          "text_animation",
+          "text_position",
+          "sfx",
+        ],
+      },
+    },
+  },
+  required: [
+    "title",
+    "objective",
+    "audience_takeaway",
+    "core_message",
+    "editorial_strategy",
+    "brief_alignment",
+    "target_duration_seconds",
+    "script",
+    "global_audio",
+    "global_captions",
+    "remake",
+    "shots",
+  ],
+} as const;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+
+function fitShotsToTargetDuration(shots: MasterShot[], targetSeconds: number): MasterShot[] {
+  const target = clamp(Number(targetSeconds) || 15, 8, 30);
+  const next = shots.map((shot) => ({ ...shot }));
+
+  const total = () => next.reduce((sum, shot) => sum + Math.max(0, shot.end - shot.start), 0);
+  let excess = total() - target;
+
+  if (excess <= 0.05) return next;
+
+  // Shorten long beats first. Preserve enough time for the hook and CTA to read.
+  const minimumFor = (shot: MasterShot) =>
+    shot.role === "CTA" ? 1.8 : shot.role === "HOOK" ? 0.65 : 0.62;
+
+  const candidates = [...next].sort(
+    (a, b) => (b.end - b.start) - (a.end - a.start)
+  );
+
+  for (const shot of candidates) {
+    if (excess <= 0.05) break;
+
+    const current = shot.end - shot.start;
+    const minimum = minimumFor(shot);
+    const reducible = Math.max(0, current - minimum);
+    if (reducible <= 0) continue;
+
+    const cut = Math.min(excess, reducible);
+    shot.end = Number((shot.end - cut).toFixed(3));
+    excess -= cut;
+  }
+
+  // If an unusually long AI plan still exceeds the target, remove the weakest
+  // non-HOOK/non-CTA beats, but preserve a commercial skeleton.
+  const minimumShotCount = target >= 12 ? 6 : 5;
+  while (excess > 0.05 && next.length > minimumShotCount) {
+    const removable = next
+      .filter((shot) => shot.role !== "HOOK" && shot.role !== "CTA")
+      .sort((a, b) => (a.editorial_score || 0) - (b.editorial_score || 0));
+
+    const weakest = removable[0];
+    if (!weakest) break;
+
+    const index = next.indexOf(weakest);
+    next.splice(index, 1);
+    excess = total() - target;
+  }
+
+  return next;
+}
+
+function normalizeShot(
+  shot: any,
+  source: ClipAnalysis,
+  index: number,
+  segmentsById: Map<string, CaptionSegment>
+): MasterShot {
+  const duration = Math.max(0.5, Number(source.duration) || 0.5);
+  let start = Number(shot.start);
+  let end = Number(shot.end);
+
+  if (!Number.isFinite(start)) start = Number(source.suggested_start) || 0;
+  if (!Number.isFinite(end)) end = Number(source.suggested_end) || Math.min(duration, start + 3);
+
+  start = clamp(start, 0, Math.max(0, duration - 0.25));
+  end = clamp(end, start + 0.5, duration);
+
+  const maxDuration = shot.role === "HOOK" || shot.role === "CTA" ? 3.6 : 5.5;
+  if (end - start > maxDuration) end = Math.min(duration, start + maxDuration);
+
+  const speechIds: string[] = Array.isArray(shot.speech_segment_ids)
+    ? (shot.speech_segment_ids as any[]).map((id: any) => String(id)).filter((id: string) => segmentsById.has(id))
+    : [];
+
+  const speechText = speechIds
+    .map((id) => segmentsById.get(id)?.text || "")
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return {
+    id: typeof shot.id === "string" && shot.id.trim() ? shot.id.trim() : `shot-${index + 1}`,
+    role: shot.role === "HOOK" || shot.role === "PAYOFF" || shot.role === "CTA" ? shot.role : "STORY",
+    source_filename: source.filename,
+    start: Number(start.toFixed(3)),
+    end: Number(end.toFixed(3)),
+    purpose: String(shot.purpose || "").trim(),
+    visual_action: String(shot.visual_action || "").trim(),
+    editorial_score: Number(clamp(Number(shot.editorial_score) || 0, 0, 100)),
+    selection_reason: String(shot.selection_reason || "").trim(),
+    speech_segment_ids: speechIds,
+    speech_text: speechText,
+    visual_treatment: String(shot.visual_treatment || "").trim(),
+    crop: ["FACE", "PRODUCT", "ACTION", "CENTER"].includes(shot.crop) ? shot.crop : "NONE",
+    zoom: Number(clamp(Number(shot.zoom) || 1, 1, 1.18).toFixed(3)),
+    speed: Number(clamp(Number(shot.speed) || 1, 0.94, 1.06).toFixed(3)),
+    motion: String(shot.motion || "subtle push-in").trim(),
+    transition_in: ["DISSOLVE", "WHIP", "MATCH", "ZOOM", "PUNCH", "SLIDE_LEFT", "SLIDE_RIGHT", "SLIDE_UP", "SLIDE_DOWN", "FLASH", "NONE"].includes(shot.transition_in) ? shot.transition_in : "CUT",
+    transition_out: ["DISSOLVE", "WHIP", "MATCH", "ZOOM", "PUNCH", "SLIDE_LEFT", "SLIDE_RIGHT", "SLIDE_UP", "SLIDE_DOWN", "FLASH", "NONE"].includes(shot.transition_out) ? shot.transition_out : "CUT",
+    on_screen_text: String(shot.on_screen_text || "").trim(),
+    caption_mode: ["WORD_BY_WORD", "PHRASE"].includes(shot.caption_mode) ? shot.caption_mode : "NONE",
+    caption_emphasis: Array.isArray(shot.caption_emphasis)
+      ? shot.caption_emphasis.map((x: any) => String(x).trim()).filter(Boolean)
+      : [],
+    music_intensity: clamp(Number(shot.music_intensity) || 0, 0, 1),
+    voice_priority: clamp(Number(shot.voice_priority) || 1, 0, 1),
+    text_style: String(shot.text_style || (shot.role === "HOOK" ? "HOOK_BOLD" : shot.role === "CTA" ? "CTA_BOLD" : "CLEAN")).trim(),
+    text_animation: String(shot.text_animation || (shot.role === "HOOK" ? "WORD_POP" : shot.role === "CTA" ? "SLIDE_UP" : "WORD_POP")).trim(),
+    text_position: String(shot.text_position || (shot.role === "CTA" ? "CENTER" : "LOWER")).trim(),
+    sfx: Array.isArray(shot.sfx) ? shot.sfx.map((x: any) => String(x).trim()).filter(Boolean).slice(0, 3) : [],
+  };
+}
+
+function buildLegacyClips(shots: MasterShot[], analysis: ClipAnalysis[]) {
+  const byFilename = new Map(analysis.map((clip) => [clip.filename, clip]));
+  return shots.map((shot, index) => {
+    const source = byFilename.get(shot.source_filename);
+    return {
+      order: index + 1,
+      clip: source?.clip ?? index + 1,
+      filename: shot.source_filename,
+      role: shot.role === "PAYOFF" ? "STORY" : shot.role,
+      start: shot.start,
+      end: shot.end,
+      duration: Number((shot.end - shot.start).toFixed(3)),
+      score: Number(source?.score) || 0,
+    };
+  });
+}
+
+
+async function fitVoiceScriptToTimeline(script: string, durationSeconds: number) {
+  const clean = String(script || "").replace(/\s+/g, " ").trim();
+  if (!clean) return clean;
+
+  const targetWords = Math.max(18, Math.min(42, Math.floor(durationSeconds * 2.45)));
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length <= targetWords) return clean;
+
+  if (!openai) {
+    return words.slice(0, targetWords).join(" ").replace(/[,:;.!?]+$/, ".");
+  }
+
+  const response = await openai.responses.create({
+    model: "gpt-5.4-mini",
+    store: false,
+    input: [
+      {
+        role: "system",
+        content:
+          "You are an expert short-form commercial copy editor. Rewrite the supplied voiceover so it fits the exact visual duration. Preserve every important factual claim, offer, price, product name and CTA. Remove filler and repetition first. Write natural spoken language. Return only the final script.",
+      },
+      {
+        role: "user",
+        content: `VISUAL DURATION: ${durationSeconds.toFixed(2)} seconds\nMAX WORDS: ${targetWords}\nSCRIPT:\n${clean}`,
+      },
+    ],
+  });
+
+  const fitted = String(response.output_text || "").replace(/\s+/g, " ").trim();
+  if (!fitted) return clean;
+  return fitted.split(/\s+/).length <= targetWords
+    ? fitted
+    : fitted.split(/\s+/).slice(0, targetWords).join(" ").replace(/[,:;.!?]+$/, ".");
+}
+
+export async function POST(request: Request) {
+  try {
+    if (!openai || !apiKey) {
+      return NextResponse.json({ error: "OPENAI_API_KEY is missing." }, { status: 500 });
+    }
+
+    const body = await request.json();
+    const creativeBrief = body?.creative_brief && typeof body.creative_brief === "object" ? body.creative_brief : null;
+    const businessProfile = body?.business_profile && typeof body.business_profile === "object" ? body.business_profile : {};
+    const productionPlan = body?.production_plan && typeof body.production_plan === "object" ? body.production_plan : null;
+    const analysis: ClipAnalysis[] = Array.isArray(body?.clips) ? body.clips : [];
+    const captions: CaptionSegment[] = Array.isArray(body?.captions)
+      ? body.captions
+          .filter((c: any) => c && typeof c.filename === "string" && typeof c.text === "string")
+          .map((c: any, index: number) => ({
+            id: String(c.id || `speech-${index + 1}`),
+            filename: c.filename,
+            start: Number(c.start) || 0,
+            end: Number(c.end) || 0,
+            text: String(c.text).trim(),
+            words: Array.isArray(c.words)
+              ? c.words
+                  .map((w: any) => ({ word: String(w.word || "").trim(), start: Number(w.start), end: Number(w.end) }))
+                  .filter((w: CaptionWord) => w.word && Number.isFinite(w.start) && Number.isFinite(w.end) && w.end > w.start)
+              : [],
+          }))
+          .filter((c: CaptionSegment) => c.text && c.end > c.start)
+      : [];
+
+    if (!analysis.length) {
+      return NextResponse.json({ error: "No footage intelligence was provided." }, { status: 400 });
+    }
+
+    const candidates = analysis
+      .map((clip) => ({ ...clip, duration: Number(clip.duration) || 0, score: Number(clip.score) || 0, verdict: String(clip.verdict || "") }))
+      .filter((clip) => clip.filename && clip.verdict.toLowerCase() !== "reject");
+
+    if (!candidates.length) {
+      return NextResponse.json({ error: "ATLAS could not find any usable footage." }, { status: 422 });
+    }
+
+    const segmentsById = new Map(captions.map((segment) => [segment.id, segment]));
+
+    const sourceData = candidates.map((clip) => ({
+      filename: clip.filename,
+      duration: clip.duration,
+      score: clip.score,
+      verdict: clip.verdict,
+      shot_type: clip.shot_type,
+      reason: clip.reason,
+      strengths: clip.strengths || [],
+      problems: clip.problems || [],
+      recommended_use: clip.recommended_use || "",
+      suggested_start: clip.suggested_start ?? 0,
+      suggested_end: clip.suggested_end ?? Math.min(clip.duration || 3, 3),
+    }));
+
+    const speechData = captions.map((segment) => ({
+      id: segment.id,
+      filename: segment.filename,
+      start: segment.start,
+      end: segment.end,
+      text: segment.text,
+      words: segment.words || [],
+    }));
+
+    const systemPrompt = `
+You are ATLAS MASTER DIRECTOR â€” a senior short-form creative director,
+scriptwriter and editor.
+
+THIS IS THE REAL FOOTAGE REMAKE STAGE.
+
+The user already created an IDEAL BLUEPRINT before uploading footage.
+That blueprint describes the best Reel ATLAS wanted to make if ideal shots
+were available.
+
+Now you have:
+1. the original creative brief,
+2. the IDEAL BLUEPRINT,
+3. real footage intelligence,
+4. footage-to-shot matching results,
+5. available transcript/caption segments.
+
+Your job is NOT to blindly execute the ideal blueprint.
+
+Your job is to compare IDEAL vs REAL and create the BEST POSSIBLE REMAKE
+using ONLY footage that actually exists.
+
+CORE PRINCIPLE:
+The creative objective survives.
+The execution can change.
+
+CREATIVE CONTROL FIELDS â€” THESE ARE EXPLICIT DIRECTORIAL CHOICES:
+The structured creative brief may contain:
+- editing_style: the desired editing language. Treat it as a hard style direction.
+  Examples: Cinematic Commercial, Fast Viral, Luxury / Premium, UGC / Authentic, Product Launch.
+- hook_priority: what should win the first 1â€“1.5 seconds.
+  Examples: Visual Shock, Product Beauty, Price / Offer, Human Reaction, Curiosity.
+
+Do not treat these as decorative metadata.
+Use them to choose the opening shot, shot rhythm, transitions, motion, text treatment,
+SFX density, visual treatment and overall editorial behavior.
+If editing_style is Cinematic Commercial, prioritize polished commercial pacing, motivated
+motion, restrained but premium typography and purposeful transitions.
+If editing_style is Fast Viral, prioritize immediate novelty, faster cuts and stronger text/SFX hits.
+If editing_style is Luxury / Premium, prioritize clean composition, controlled motion and minimal typography.
+If editing_style is UGC / Authentic, prioritize human moments, natural motion and less-polished treatment.
+If editing_style is Product Launch, prioritize product reveal, feature/value communication and a strong final hero.
+
+For hook_priority, choose the strongest available real footage that satisfies that priority.
+Do not force a weak hook simply because it has the correct role label.
+
+THINK IN THIS ORDER:
+
+1. LOCK THE CREATIVE OBJECTIVE
+Preserve objective, audience, desired action, core message, tone, pacing and
+target duration unless the real footage makes a small adaptation necessary.
+
+2. AUDIT THE IDEAL BLUEPRINT
+Understand its hook, story, payoff, CTA, voice, music, SFX, captions,
+text and ideal shot requirements.
+
+3. AUDIT THE REAL FOOTAGE
+Understand what every usable clip actually contains, its quality, duration,
+framing, motion, usable moments, strengths and problems.
+
+4. COMPARE IDEAL VS REAL
+For important ideal beats decide:
+- KEEP: the footage can execute the intended beat.
+- ADAPT: the footage can execute it, but wording/order/treatment must change.
+- REBUILD: the original beat is not realistically executable with the footage.
+
+5. REMAKE THE CREATIVE PLAN
+Do not merely report missing shots. Actually redesign the Reel around the
+strongest available footage.
+
+IMPORTANT: IDEAL SHOT LABELS ARE NOT TIMELINE ORDERS.
+A label such as hook, setup, development, payoff or CTA describes the ROLE
+that a visual can play. It does NOT mean that the clip must appear at a
+fixed position in the final Reel.
+
+The real footage is allowed to change the order. Judge every candidate by
+actual editorial strength: attention, clarity, emotion, product desire,
+motion, novelty, information value and fit with the current voice beat.
+Then place it where it creates the strongest sequence.
+
+Example: a bite/reaction shot may be labelled PAYOFF in the ideal blueprint,
+but if it is the strongest attention-grabbing moment in the real footage,
+it may be the HOOK. A clean product hero may be better near the ending.
+Do NOT place a shot at the end merely because its ideal label says payoff.
+Only the actual brand/offer/CTA ending should normally be reserved for the
+last beat.
+
+EDITORIAL PASS â€” THINK LIKE THE FINAL CUT EDITOR:
+Before returning shots, mentally perform a first-pass cut and a second-pass refinement.
+
+FIRST PASS:
+- Rank EVERY usable candidate by editorial strength BEFORE assigning timeline positions.
+- Do not confuse the Vision "shot_type" label with the final position. It is descriptive metadata only.
+- Compare the strongest candidates directly. A higher-scoring candidate should normally be used over a lower-scoring one unless you can state a concrete editorial reason not to use it.
+- If the top-scoring candidate is excluded, explicitly explain why in the plan.
+- For a 10â€“16 second Reel with at least 4 strong usable sources, build 7 purposeful visual beats by default, with 6â€“9 allowed when the footage genuinely demands it. A 15-second commercial should normally have 7â€“8 visual beats so the edit has enough novelty without becoming frantic.
+- For a 15-second target, keep the finished visual edit in a deliberate 13â€“15 second band. Do not collapse a complete 15-second commercial into a 6â€“8 second montage unless the brief explicitly asks for a sub-10-second cut.
+- Keep most individual beats around 0.85â€“2.2 seconds. The first hook should normally be 0.55â€“1.05 seconds unless a slower visual shock clearly earns more time. The CTA may be 1.8â€“2.8 seconds.
+- Prefer a rhythm of HOOK ACTION â†’ DETAIL â†’ ACTION â†’ CONTRAST/RESULT â†’ HUMAN/PAYOFF â†’ HERO â†’ CTA when the footage supports it. Do not let two adjacent beats communicate the same visual idea.
+- Prefer different visual information per beat. Different timestamps from the same source count only when the visual moment is genuinely different.
+- Choose the strongest attention-grabbing visual for the first 0.55â€“1.0 seconds, regardless of its ideal blueprint label, and make the first text/SFX beat land immediately with it when useful.
+- Match each visual beat to the exact idea being spoken or communicated.
+- Remove redundant clips.
+- Keep most cuts between 0.75 and 2.2 seconds. The first 2 seconds should normally contain at least two distinct visual moments when the footage supports it. Use longer holds only for a payoff, price reveal or CTA that genuinely needs reading time.
+- Do not use the same visual idea twice consecutively.
+
+SECOND PASS:
+- Re-score the proposed sequence as a viewer, not as a checklist.
+- If moving a shot earlier creates a stronger hook, MOVE IT.
+- If a supposed payoff is better as a hook or mid-story interruption, MOVE IT.
+- If the supposed hook is visually weak, demote it.
+- Only keep the original blueprint order when the real footage proves that it is the strongest order.
+- The sequence should feel like an editor discovered the best story in the footage, not like the blueprint was filled slot-by-slot.
+
+THIRD PASS â€” RETENTION CHECK:
+- Check pacing every 1â€“2 seconds.
+- Check that the viewer sees something new when the story advances.
+- Use alternate moments from the same source when they are genuinely different.
+- Make the emotional/product high point land at the strongest moment of the story, not automatically at the end.
+- Reserve the clearest brand/offer/CTA visual for the ending when available.
+- If a shot is visually weak, shorten it rather than padding it.
+- If the footage cannot support a beat, change the beat rather than forcing it.
+- Reject any sequence that feels like â€œblueprint slot 1 â†’ slot 2 â†’ slot 3â€ when a better footage-driven order exists.
+
+6. VOICE DECISION
+If the ideal Reel needs speech/voiceover, decide whether it should be:
+- USER_RECORDING, or
+- AI_VOICE.
+If voice is needed, provide the COMPLETE word-for-word final script.
+Never write "mention the offer" or "talk about the burger".
+Write the exact words to say.
+If voice is not needed, use NONE and an empty script.
+
+7. BUILD THE FINAL EDIT PLAN
+The returned shots must reference real filenames and valid timestamps.
+
+HARD RULES:
+- NEVER invent footage, filenames or timestamps.
+- NEVER use rejected footage.
+- NEVER invent facts, prices, offers or dialogue unsupported by the brief or
+  supplied material.
+- If an ideal shot is missing, adapt or rebuild around real footage.
+- Prefer a strong honest Reel over a fictional perfect one.
+- Do not force every uploaded clip into the edit.
+- A source filename may be reused deliberately when DIFFERENT timestamps or crops create a new editorial beat.
+- Never repeat the exact same source timestamp window.
+- The ideal blueprintâ€™s shot order is advisory only; the final shots array must be ordered by the best real edit.
+- The final shot should normally be the strongest available CTA/brand/offer ending, but only when such footage exists.
+- Timestamps must stay inside source duration.
+- Zoom must stay between 1.0 and 1.18.
+- Use a concrete motion value such as "push-in", "pull-out", "pan-left", "pan-right", or "static" and keep speed between 0.94 and 1.06.
+- For every beat choose a deliberate text treatment when text is useful: text_style examples are "HOOK_BOLD", "PRICE_ACCENT", "WORD_EMPHASIS", "MINIMAL", "CTA_BOLD", "CLEAN"; text_animation examples are "POP", "WORD_POP", "SLIDE_UP", "SLIDE_LEFT", "SLIDE_RIGHT", "FADE_UP", "NONE"; text_position examples are "TOP", "CENTER", "LOWER", "SAFE_TOP", "SAFE_LOWER".
+- Do not add on-screen text to every beat by default. Use text when it clarifies the hook, value, offer, feature or CTA.
+- SFX should be intentional and sparse. Use physical/editorial labels when the footage supports them: "WATER_SPRAY", "FOAM", "WIPE_TEXTURE", "MACHINE_HUM", "WHOOSH", "REVEAL_IMPACT", "CTA_HIT", "HOOK_IMPACT", "SOFT_IMPACT", "CLICK", "CRUNCH", "SIZZLE", "RISER"; normally 0â€“2 per beat. Prefer real-world physical cues for actions (water, wipe, machine, polish) and reserve impacts/whooshes for transitions, reveals and text emphasis.
+- Motion, typography and SFX must vary with the editing style. Never apply the same animation, motion and SFX pattern to every shot. For HOOK text prefer KINETIC/WORD_POP/POP when the phrase is short; use a stronger 0.02â€“0.22s entrance. For CTA use a clear final lock-up rather than a generic caption.
+- Prefer motivated transitions: action-to-action cuts, match cuts for matching movement/shape, whip only for genuine energy shifts, dissolve only for time/emotional changes.
+- Prefer cuts that land on a visual action or spoken emphasis. Treat the first 1.5 seconds as the highest-priority retention zone.
+- Prefer CUT; other transitions need a reason. Use MATCH only when an action or shape clearly carries across the cut. Use WHIP sparingly.
+- Avoid two consecutive shots with the same composition, motion direction, and visual treatment.
+- speech_segment_ids may reference ONLY supplied transcript IDs.
+- If there is no usable speech, do not invent speech from footage.
+- Captions based on speech must use supplied transcript segments.
+
+SCRIPT RULES:
+The final script must match the REMADE edit, not blindly repeat the ideal
+script. Rewrite it whenever the available footage changes the story.
+
+A voice script must sound natural aloud and fit the target duration.
+If the target is around 15 seconds, keep the AI voice roughly 28â€“36 spoken words.
+Never create a 20+ second script for a 12â€“15 second visual concept just because more narration is possible.
+The visual timeline is the primary editorial clock.
+
+AUDIO RULES:
+Voice wins over music. Music supports the story. SFX must have a purpose.
+
+TEXT RULES:
+On-screen text must be concise and factually supported.
+
+PRO EDIT V19 â€” ACTUAL CRAFT, NOT JUST METADATA:
+- The renderer is deterministic. Therefore the shot fields are the edit: choose them deliberately.
+- For a 15s commercial with 6+ usable sources, target 7â€“8 beats unless the footage genuinely rewards fewer.
+- Do not put on-screen text on every beat. Usually reserve designed typography for HOOK, one value/feature beat, and CTA.
+- Use at least 2 distinct text animation systems across a text-bearing sequence when useful.
+- Use at least 3 distinct motion treatments across the sequence when footage supports it.
+- Prefer 5â€“7 CUTs and at most 1â€“2 motivated non-CUT transitions in a 15s commercial.
+- Non-CUT transitions must be attached to a visual reason: motion continuation, shape match, reveal, or energy spike.
+- Never use a fancy transition just because it is available.
+- Hook typography should feel like a designed headline; CTA should feel like a lock-up; process captions should be minimal.
+- If the footage contains a clear transformation/result, protect the result as the visual climax and do not bury it under effects.
+- Every shot must have a distinct editorial job. If two adjacent shots have the same job, remove/reorder one.
+
+PRO EDITORIAL CHOREOGRAPHY â€” NON-NEGOTIABLE:
+- Treat each cut as a designed handoff, not a file change.
+- Every non-CUT transition needs a reason: motion continuation, shape match, energy spike, time change, or reveal.
+- CUT remains dominant. Do not spam fancy transitions.
+- Do not use the same transition type more than twice consecutively.
+- Motion must create contrast between beats: restrained/static for beauty, PUSH_IN for detail, PAN for movement, HANDHELD for human/action, and restraint for the hero.
+- Typography is a graphic system, not a label system. Use text only when it improves communication.
+- Hook and CTA may use stronger hierarchy; process beats should often have no text.
+- When text is used, use hierarchy, safe margins, deliberate entrance/exit and optional accent emphasis rather than repeating one preset.
+- Use WORD_POP/WORD_REVEAL for short phrases, SLIDE_UP/SLIDE_LEFT for editorial labels, and FADE for restrained premium beats.
+- The CTA is a designed lock-up: strongest hero source, concise action, enough reading time and visual breathing room.
+- The first 1.5s should contain a deliberate visual hook plus a designed text/SFX hit when useful.
+- If two adjacent shots feel like "clip â†’ clip", redesign the handoff using action, composition, rhythm or a motivated transition.
+
+ANTI-TEMPLATE VALIDATION:
+Before returning JSON, perform this private checklist:
+1. Identify the best 3 real candidates by Vision score and visual usefulness.
+2. Confirm each is either used in the final timeline OR consciously rejected with a reason.
+3. Confirm the first shot is the strongest attention candidate, not simply the first blueprint role.
+4. Confirm the final shot is the strongest available ending candidate, not automatically the PAYOFF.
+5. Confirm no two consecutive shots communicate the same visual idea.
+6. Confirm the timeline has purposeful visual changes across the full duration.
+7. Confirm no two consecutive shots use the same source unless the visual action is materially different.
+8. Confirm the same exact timestamp window is never repeated.
+9. Confirm at least 4 unique source files are used for a 15-second Reel when available.
+10. Confirm the finished visual duration stays inside the deliberate target band.
+11. Confirm at least 5 shots survive for a 15-second commercial unless the footage is genuinely insufficient.
+12. Confirm the edit still works if the ideal blueprint labels are mentally removed.
+
+QUALITY BAR:
+The final Reel should feel intentionally designed around what was actually
+captured, not like footage was forced into a prewritten template.
+
+Return ONLY the structured JSON object required by the application.
+`;
+
+    const userPrompt = `
+=== BUSINESS PROFILE ===
+${JSON.stringify(businessProfile, null, 2)}
+
+=== CREATIVE BRIEF ===
+${JSON.stringify(creativeBrief || {}, null, 2)}
+
+=== IDEAL BLUEPRINT ===
+Created BEFORE seeing the real footage.
+${JSON.stringify(productionPlan || {}, null, 2)}
+
+=== REAL FOOTAGE INTELLIGENCE ===
+${JSON.stringify(sourceData, null, 2)}
+
+=== FOOTAGE-TO-SHOOT MATCHING ===
+${JSON.stringify(body?.footage_matches || [], null, 2)}
+
+=== AVAILABLE SPEECH / TRANSCRIPT ===
+${JSON.stringify(speechData, null, 2)}
+
+NOW PERFORM THE REMAKE.
+
+First decide whether the Ideal Blueprint should be KEEP, ADAPT or REBUILD.
+
+Then perform a footage-first editorial ranking. Do NOT start by assigning
+clip 1 to ideal shot 1, clip 2 to ideal shot 2, etc. First identify the
+strongest real moments, then build the story around them.
+
+For every selected shot, provide an editorial_score (0â€“100) and a concrete
+selection_reason. Treat the Vision score as evidence, not as the final
+decision. The final timeline must reflect your own comparison of hook
+strength, novelty, emotion, product desire, clarity, motion, and sequence
+fit.
+
+For a 10â€“16 second Reel with at least 3 strong usable sources, target 5â€“8
+visual beats. Do not inflate the count with meaningless cuts; every beat
+must add new visual information.
+
+Then create the final Master Edit Plan. The shots array MUST be in the
+actual playback order of the final Reel. The shot_type field describes the
+editorial role of that shot, not a mandatory position.
+
+Before finalizing, ask: â€œIf I ignored the blueprint labels and watched only
+the footage, would I still choose roughly this order?â€ If not, reorder it.
+
+The REMAKE object must explicitly explain:
+- what survives from the Ideal Blueprint,
+- what changed,
+- which ideal shots are missing,
+- what the footage is actually good at,
+- what problems the footage has,
+- whether voice is needed,
+- whether the user or AI should provide the voice,
+- the exact final voice script if needed,
+- the revised timeline.
+
+The "shots" array is the actual executable final edit.
+Every shot MUST use a real source filename and valid source timestamps.
+
+Do NOT optimize for using all footage.
+Optimize for the strongest finished Reel while preserving the original brief.
+Build a deliberate beginning, middle and ending.
+Create enough visual changes to sustain attention across the full target duration.
+For a 15-second target, do NOT return a 6â€“9 second edit unless the footage is genuinely unusable; prefer 13â€“15 seconds with 5â€“7 meaningful shots.
+Do not fill unused time by holding or repeating a weak shot.
+Avoid repeating the same visual action in adjacent beats.
+Use different motion ideas across the sequence (for example static -> push-in -> pan -> action -> hero hold) instead of assigning the same generic motion to every shot.
+Use transitions intentionally. CUT is the default, but use a MATCH, DISSOLVE or WHIP only where it improves continuity or emphasis; never use transitions decoratively.
+If footage is insufficient for the ideal story, REBUILD the story around the strongest real moments.
+
+SOURCE DIVERSITY RULE:
+- If 4+ usable source files exist, use at least 4 unique source filenames in a 15-second Reel.
+- Avoid the same filename in adjacent shots.
+- Avoid reusing the same source for both HOOK and CTA unless it contains genuinely different moments and no better ending exists.
+- Prefer a visually different source for the payoff than the hook.
+
+VOICE PACING RULE:
+- The final visual timeline is the hard clock for narration.
+- For a 10â€“16 second Reel, normally write about 2.1â€“2.45 spoken words per second.
+- Never write a 19â€“20 second voiceover for a 12â€“15 second Reel.
+- Preserve the strongest factual claim, offer/price and CTA; remove filler first.
+- The voice should finish naturally at or slightly before the final visual beat.
+`;
+
+
+    const response = await openai.responses.create({
+      model: "gpt-5.4-mini",
+      store: false,
+      input: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: userPrompt },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "atlas_master_edit_plan_v2",
+          strict: true,
+          schema: masterPlanSchema,
+        },
+      },
+    });
+
+    if (!response.output_text) throw new Error("ATLAS Master Director returned no plan.");
+    const raw = JSON.parse(response.output_text);
+    const byFilename = new Map(candidates.map((clip) => [clip.filename, clip]));
+    const seenWindows = new Set<string>();
+    const shots: MasterShot[] = [];
+
+    for (const rawShot of Array.isArray(raw.shots) ? raw.shots : []) {
+      const filename = String(rawShot?.source_filename || "");
+      const source = byFilename.get(filename);
+      if (!source) continue;
+
+      const normalized = normalizeShot(
+        rawShot,
+        source,
+        shots.length,
+        segmentsById
+      );
+
+      const signature = [
+        normalized.source_filename,
+        normalized.start.toFixed(2),
+        normalized.end.toFixed(2),
+      ].join("|");
+
+      if (seenWindows.has(signature)) continue;
+      seenWindows.add(signature);
+      shots.push(normalized);
+    }
+
+    if (!shots.length) throw new Error("ATLAS could not map the Master Plan back to real footage.");
+
+    const requestedTarget = Number(raw.target_duration_seconds) || Number(creativeBrief?.target_duration_seconds) || 15;
+    const fittedShots = fitShotsToTargetDuration(shots, requestedTarget);
+    const totalDuration = Number(fittedShots.reduce((sum, shot) => sum + shot.end - shot.start, 0).toFixed(2));
+
+    // VOICE SYNC: the finished visual edit is the clock. If the Director wrote
+    // a script that is too long for the actual cut, rewrite it before the UI
+    // generates audio. This prevents long narration from being truncated by
+    // the renderer.
+    if (raw.remake?.voice?.needed && raw.remake?.voice?.script) {
+      const originalScript = String(raw.remake.voice.script).trim();
+      const fittedScript = await fitVoiceScriptToTimeline(originalScript, totalDuration);
+      raw.remake.voice.script = fittedScript;
+      raw.remake.voice.reason = [
+        String(raw.remake.voice.reason || "").trim(),
+        `Voice fitted to ${totalDuration.toFixed(2)}s visual timeline (${fittedScript.split(/\s+/).filter(Boolean).length} words).`,
+      ].filter(Boolean).join(" ");
+    }
+
+    const emphasis = Array.isArray(raw.global_captions?.emphasis_words)
+      ? raw.global_captions.emphasis_words.map((x: any) => String(x).trim()).filter(Boolean)
+      : [];
+
+    const masterPlan = {
+      version: "2.0",
+      success: true,
+      title: String(raw.title || "ATLAS Reel"),
+      objective: String(raw.objective || ""),
+      audience_takeaway: String(raw.audience_takeaway || ""),
+      core_message: String(raw.core_message || ""),
+      editorial_strategy: String(raw.editorial_strategy || ""),
+      brief_alignment: String(raw.brief_alignment || ""),
+      creative_brief: creativeBrief,
+      target_duration_seconds: Math.min(Number(raw.target_duration_seconds) || requestedTarget, requestedTarget),
+      total_duration_seconds: totalDuration,
+      script: {
+        hook: String(raw.script?.hook || ""),
+        setup: String(raw.script?.setup || ""),
+        development: String(raw.script?.development || ""),
+        payoff: String(raw.script?.payoff || ""),
+        ending: String(raw.script?.ending || ""),
+      },
+      remake: {
+        decision: ["KEEP", "ADAPT", "REBUILD"].includes(raw.remake?.decision)
+          ? raw.remake.decision
+          : "ADAPT",
+        summary: String(raw.remake?.summary || ""),
+        what_survives_from_ideal: Array.isArray(raw.remake?.what_survives_from_ideal)
+          ? raw.remake.what_survives_from_ideal.map((x: any) => String(x))
+          : [],
+        what_changed: Array.isArray(raw.remake?.what_changed)
+          ? raw.remake.what_changed.map((x: any) => String(x))
+          : [],
+        missing_ideal_shots: Array.isArray(raw.remake?.missing_ideal_shots)
+          ? raw.remake.missing_ideal_shots.map((x: any) => String(x))
+          : [],
+        footage_strengths: Array.isArray(raw.remake?.footage_strengths)
+          ? raw.remake.footage_strengths.map((x: any) => String(x))
+          : [],
+        footage_problems: Array.isArray(raw.remake?.footage_problems)
+          ? raw.remake.footage_problems.map((x: any) => String(x))
+          : [],
+        voice: {
+          needed: Boolean(raw.remake?.voice?.needed),
+          source: ["USER_RECORDING", "AI_VOICE", "NONE"].includes(raw.remake?.voice?.source)
+            ? raw.remake.voice.source
+            : "NONE",
+          reason: String(raw.remake?.voice?.reason || ""),
+          script: String(raw.remake?.voice?.script || ""),
+        },
+        revised_timeline: Array.isArray(raw.remake?.revised_timeline)
+          ? raw.remake.revised_timeline.map((x: any) => ({
+              beat_id: String(x?.beat_id || ""),
+              start: Number(x?.start) || 0,
+              end: Number(x?.end) || 0,
+              purpose: String(x?.purpose || ""),
+              source_filename: String(x?.source_filename || ""),
+              reason_for_change: String(x?.reason_for_change || ""),
+            }))
+          : [],
+      },
+      audio: {
+        music_mood: String(raw.global_audio?.music_mood || "Energetic"),
+        music_intensity: clamp(Number(raw.global_audio?.music_intensity) || 0, 0, 1),
+        voice_priority: clamp(Number(raw.global_audio?.voice_priority) || 1, 0, 1),
+        duck_music_under_speech: raw.global_audio?.duck_music_under_speech !== false,
+        target_lufs: Number(raw.global_audio?.target_lufs) || -14,
+      },
+      captions: {
+        enabled: raw.global_captions?.enabled !== false,
+        style: String(raw.global_captions?.style || "Bold"),
+        max_words_per_chunk: Math.max(2, Math.min(6, Number(raw.global_captions?.max_words_per_chunk) || 4)),
+        emphasis_words: emphasis,
+        position: String(raw.global_captions?.position || "LOWER_CENTER"),
+      },
+      shots: fittedShots,
+      clips: buildLegacyClips(fittedShots, candidates),
+      speech_segments_used: fittedShots.flatMap((shot) => shot.speech_segment_ids),
+    };
+
+    return NextResponse.json(masterPlan);
+  } catch (error: any) {
+    console.error("ATLAS MASTER DIRECTOR ERROR:", error);
+    return NextResponse.json({ error: error?.message || "ATLAS Master Director failed." }, { status: 500 });
+  }
+}
+
+==================== app/api/match-footage/route.ts ====================
+
+import OpenAI from "openai";
+import { NextResponse } from "next/server";
+
+const apiKey = process.env.OPENAI_API_KEY;
+const openai = apiKey ? new OpenAI({ apiKey }) : null;
+
+const schema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    matches: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          shot_number: { type: "string" },
+          shot_title: { type: "string" },
+          status: { type: "string", enum: ["MATCHED", "PARTIAL", "MISSING"] },
+          clip_number: { type: ["integer", "null"] },
+          filename: { type: "string" },
+          confidence: { type: "number" },
+          source_start: { type: "number" },
+          source_end: { type: "number" },
+          reason: { type: "string" },
+          recommendation: { type: "string" },
+        },
+        required: ["shot_number", "shot_title", "status", "clip_number", "filename", "confidence", "source_start", "source_end", "reason", "recommendation"],
+      },
+    },
+  },
+  required: ["matches"],
+};
+
+export async function POST(request: Request) {
+  try {
+    if (!apiKey || !openai) {
+      return NextResponse.json({ error: "OPENAI_API_KEY is missing." }, { status: 500 });
+    }
+
+    const body = await request.json();
+    const plan = body?.production_plan;
+    const analyses = Array.isArray(body?.analyses) ? body.analyses : [];
+    const brief = body?.creative_brief ?? {};
+    const businessProfile = body?.business_profile && typeof body.business_profile === "object" ? body.business_profile : {};
+
+    if (!plan?.shots?.length || !analyses.length) {
+      return NextResponse.json({ error: "Production shots and footage analysis are required." }, { status: 400 });
+    }
+
+    const prompt = `
+You are ATLAS's footage matching director.
+
+The Production Plan is the SOURCE OF TRUTH for what the final Reel is supposed to contain.
+Your job is NOT to invent a new story. Match the available analyzed footage to the requested shots.
+
+BUSINESS PROFILE:
+${JSON.stringify(businessProfile, null, 2)}
+
+CREATIVE BRIEF:
+${JSON.stringify(brief, null, 2)}
+
+REQUESTED PRODUCTION PLAN:
+${JSON.stringify(plan.shots, null, 2)}
+
+AVAILABLE FOOTAGE ANALYSIS:
+${JSON.stringify(analyses, null, 2)}
+
+RULES:
+1. Every requested shot must receive exactly one result.
+2. Use a real clip only when its analyzed content genuinely supports the requested shot.
+3. MATCHED = strong usable match (confidence >= 80).
+4. PARTIAL = usable with compromise (confidence 55-79).
+5. MISSING = no honest match (confidence < 55). clip_number must be null and filename empty for MISSING.
+6. Never pretend a generic clip is the requested shot just to fill the timeline.
+7. Prefer the clip's suggested_start/suggested_end when they fit the requested shot.
+8. source_start/source_end must stay inside that clip's analyzed duration.
+9. If multiple clips fit, choose the one that best serves the original creative objective.
+10. The recommendation should tell the user what to do next when the match is partial or missing.
+11. Keep the original shot_number and shot_title.
+12. Return ONLY JSON.
+`;
+
+    const response = await openai.responses.create({
+      model: "gpt-5.4-mini",
+      store: false,
+      input: [
+        { role: "system", content: [{ type: "input_text", text: prompt }] },
+        { role: "user", content: [{ type: "input_text", text: "Match the footage to the production plan." }] },
+      ],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "atlas_footage_match",
+          strict: true,
+          schema,
+        },
+      },
+    });
+
+    if (!response.output_text) throw new Error("OpenAI returned an empty footage match.");
+    const parsed = JSON.parse(response.output_text);
+
+    const durations = new Map<number, number>(
+      analyses.map((a: any) => [Number(a.clip), Number(a.duration ?? 0)])
+    );
+
+    parsed.matches = Array.isArray(parsed.matches)
+      ? parsed.matches.map((m: any) => {
+          const clip = m.clip_number == null ? null : Number(m.clip_number);
+          const duration = clip == null ? 0 : (durations.get(clip) ?? 0);
+          const start = clip == null ? 0 : Math.max(0, Math.min(Number(m.source_start ?? 0), duration));
+          const end = clip == null ? 0 : Math.max(start, Math.min(Number(m.source_end ?? duration), duration));
+          return {
+            shot_number: String(m.shot_number),
+            shot_title: String(m.shot_title),
+            status: ["MATCHED", "PARTIAL", "MISSING"].includes(m.status) ? m.status : "MISSING",
+            clip_number: clip,
+            filename: String(m.filename ?? ""),
+            confidence: Math.max(0, Math.min(100, Number(m.confidence ?? 0))),
+            source_start: start,
+            source_end: end,
+            reason: String(m.reason ?? ""),
+            recommendation: String(m.recommendation ?? ""),
+          };
+        })
+      : [];
+
+    return NextResponse.json(parsed);
+  } catch (error) {
+    console.error("ATLAS FOOTAGE MATCH ERROR:", error);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Footage matching failed." }, { status: 500 });
+  }
+}
+
+==================== remotion/AtlasRemotionEdit.tsx ====================
+
+import React from "react";
+import {
+  AbsoluteFill,
+  Audio,
+  Easing,
+  OffthreadVideo,
+  Sequence,
+  interpolate,
+  spring,
+  staticFile,
+  useCurrentFrame,
+  useVideoConfig,
+} from "remotion";
+
+type Caption = {
+  text: string;
+  start: number;
+  end: number;
+  emphasis?: boolean;
+  style?: string;
+  position?: string;
+};
+
+type Sfx = {
+  source?: string;
+  start?: number;
+  duration?: number;
+  volume?: number;
+  fadeIn?: number;
+  fadeOut?: number;
+};
+
+type Shot = {
+  id: string;
+  role: string;
+  source_filename: string;
+  start: number;
+  end: number;
+
+  crop?: string;
+  zoom?: number;
+  motion?: string;
+  transition_in?: string;
+  transition_out?: string;
+  speed?: number;
+  speed_curve?: Array<{ at?: number; speed?: number }>;
+  zoom_start?: number;
+  zoom_end?: number;
+  source_audio_volume?: number;
+  sfx?: string[];
+  sfx_events?: Array<{ type?: string; at?: number; volume?: number }>;
+  music_volume?: number;
+  music_curve?: Array<{ at?: number; level?: number }>;
+  color_treatment?: string;
+  beat_intent?: string;
+  cut_on?: string;
+
+  x?: number;
+  y?: number;
+  rotation?: number;
+
+  brightness?: number;
+  contrast?: number;
+  saturation?: number;
+  blur?: number;
+  overlay_opacity?: number;
+
+  on_screen_text?: string;
+  text_position?: string;
+  text_style?: string;
+  text_animation?: string;
+  text_size?: number;
+  text_color?: string;
+  text_weight?: number;
+  emphasis_words?: string[];
+};
+
+type Props = {
+  shots: Shot[];
+  assets: Record<string, string>;
+
+  voice?: string;
+  music?: string;
+  musicVolume?: number;
+  music_curve?: Array<{ at?: number; level?: number }>;
+  musicDucking?: boolean;
+  musicDuckingDb?: number;
+  voicePriority?: string;
+
+  fps: number;
+  width: number;
+  height: number;
+
+  captions?: Caption[];
+  sfx?: Sfx[];
+
+  brand?: {
+    primaryColor?: string;
+    secondaryColor?: string;
+    fontFamily?: string;
+    logo?: string;
+  };
+};
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.max(min, Math.min(max, value));
+
+const curveValue = (curve: Array<{ at?: number; speed?: number; level?: number }> | undefined, progress: number, key: "speed" | "level", fallback: number) => {
+  if (!Array.isArray(curve) || curve.length < 2) return fallback;
+  const points = curve
+    .map((p) => ({ at: clamp(Number(p.at) || 0, 0, 1), value: clamp(Number(p[key]) || fallback, key === "speed" ? 0.5 : 0, key === "speed" ? 2 : 1) }))
+    .sort((a, b) => a.at - b.at);
+  if (progress <= points[0].at) return points[0].value;
+  for (let i = 1; i < points.length; i++) {
+    if (progress <= points[i].at) {
+      const a = points[i - 1];
+      const b = points[i];
+      const t = (progress - a.at) / Math.max(0.0001, b.at - a.at);
+      return a.value + (b.value - a.value) * t;
+    }
+  }
+  return points[points.length - 1].value;
+};
+
+const cropPosition = (crop?: string) => {
+  const value = String(crop || "CENTER").toUpperCase();
+
+  if (value === "FACE") return "50% 38%";
+  if (value === "PRODUCT") return "50% 52%";
+  if (value === "ACTION") return "50% 55%";
+  if (value === "TOP") return "50% 30%";
+  if (value === "BOTTOM") return "50% 70%";
+  if (value === "LEFT") return "30% 50%";
+  if (value === "RIGHT") return "70% 50%";
+  if (value === "TOP_LEFT") return "30% 30%";
+  if (value === "TOP_RIGHT") return "70% 30%";
+  if (value === "BOTTOM_LEFT") return "30% 70%";
+  if (value === "BOTTOM_RIGHT") return "70% 70%";
+
+  return "50% 50%";
+};
+
+const textPosition = (position?: string) => {
+  const p = String(position || "BOTTOM").toLowerCase();
+
+  if (p.includes("top")) {
+    return { top: 135, bottom: "auto" as const };
+  }
+
+  if (p.includes("middle") || p.includes("center")) {
+    return {
+      top: "50%",
+      bottom: "auto" as const,
+      transformOrigin: "center",
+    };
+  }
+
+  if (p.includes("bottom")) {
+    return { bottom: 190, top: "auto" as const };
+  }
+
+  return { bottom: 190, top: "auto" as const };
+};
+
+const transitionName = (value?: string) =>
+  String(value || "CUT").trim().toUpperCase();
+
+const motionName = (value?: string) =>
+  String(value || "STATIC").trim().toUpperCase();
+
+const normalizedTextStyle = (value?: string) =>
+  String(value || "CLEAN").trim().toUpperCase();
+
+const colorPreset = (value?: string) => {
+  const key = String(value || "CLEAN_PREMIUM").toUpperCase();
+  const presets: Record<string, { brightness: number; contrast: number; saturation: number }> = {
+    NATURAL: { brightness: 1.00, contrast: 1.03, saturation: 1.00 },
+    CLEAN_PREMIUM: { brightness: 1.02, contrast: 1.10, saturation: 1.02 },
+    CRISP_DETAIL: { brightness: 1.01, contrast: 1.18, saturation: 0.99 },
+    DARK_LUXURY: { brightness: 0.97, contrast: 1.20, saturation: 0.94 },
+    PUNCHY: { brightness: 1.01, contrast: 1.22, saturation: 1.08 },
+    WARM: { brightness: 1.03, contrast: 1.08, saturation: 1.06 },
+    COOL: { brightness: 1.01, contrast: 1.10, saturation: 0.97 },
+  };
+  return presets[key] || presets.CLEAN_PREMIUM;
+};
+
+const sfxSource = (label?: string) => {
+  const key = String(label || "NONE").toUpperCase();
+  const map: Record<string, string> = {
+    WHOOSH: "sfx/whoosh.wav",
+    HOOK_IMPACT: "sfx/impact.wav",
+    REVEAL_IMPACT: "sfx/impact.wav",
+    CTA_HIT: "sfx/click.wav",
+    CLICK: "sfx/click.wav",
+    POP: "sfx/pop.wav",
+    WATER: "sfx/spray.wav",
+    FOAM: "sfx/spray.wav",
+    WIPE: "sfx/wipe.wav",
+    MACHINE: "sfx/whoosh.wav",
+    SWIPE: "sfx/whoosh.wav",
+  };
+  return map[key] || "";
+};
+
+const ShotLayer: React.FC<{
+  shot: Shot;
+  src: string;
+  durationInFrames: number;
+  index: number;
+  captions: Caption[];
+  brand?: Props["brand"];
+}> = ({ shot, src, durationInFrames, index, captions, brand }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+
+  const progress =
+    durationInFrames <= 1
+      ? 1
+      : clamp(frame / (durationInFrames - 1), 0, 1);
+
+  const baseSpeed = clamp(Number(shot.speed) || 1, 0.25, 3);
+  const speed = curveValue(shot.speed_curve, progress, "speed", baseSpeed);
+  const zoomStart = clamp(Number(shot.zoom_start ?? shot.zoom) || 1, 1, 1.55);
+  const zoomEnd = clamp(Number(shot.zoom_end ?? shot.zoom) || zoomStart, 1, 1.65);
+  const directorZoom = interpolate(progress, [0, 1], [zoomStart, zoomEnd], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+  const transitionIn = transitionName(shot.transition_in);
+  const transitionOut = transitionName(shot.transition_out);
+  const motion = motionName(shot.motion);
+
+  const edge = Math.min(18, Math.max(4, Math.floor(durationInFrames * 0.16)));
+  const enterProgress = clamp(frame / edge, 0, 1);
+  const exitProgress = clamp(
+    (durationInFrames - 1 - frame) / edge,
+    0,
+    1
+  );
+  const enterEase = Easing.out(Easing.cubic)(enterProgress);
+  const exitEase = Easing.out(Easing.cubic)(exitProgress);
+
+  // ------------------------------------------------------------
+  // TRANSITIONS â€” execution only, no creative improvisation.
+  // ------------------------------------------------------------
+  let opacity = 1;
+  let transitionX = 0;
+  let transitionY = 0;
+  let transitionBlur = 0;
+  let transitionScale = 1;
+  let flashOpacity = 0;
+
+  if (transitionIn === "DISSOLVE" || transitionIn === "FADE") {
+    opacity = enterEase;
+  }
+
+  if (transitionIn === "WHIP") {
+    transitionX = interpolate(
+      enterEase,
+      [0, 1],
+      [index % 2 === 0 ? -11 : 11, 0]
+    );
+    transitionBlur = interpolate(enterEase, [0, 1], [10, 0]);
+  }
+
+  if (transitionIn === "SLIDE_LEFT") {
+    transitionX = interpolate(enterEase, [0, 1], [100, 0]);
+  }
+
+  if (transitionIn === "SLIDE_RIGHT") {
+    transitionX = interpolate(enterEase, [0, 1], [-100, 0]);
+  }
+
+  if (transitionIn === "SLIDE_UP") {
+    transitionY = interpolate(enterEase, [0, 1], [100, 0]);
+  }
+
+  if (transitionIn === "SLIDE_DOWN") {
+    transitionY = interpolate(enterEase, [0, 1], [-100, 0]);
+  }
+
+  if (transitionIn === "ZOOM" || transitionIn === "PUNCH") {
+    transitionScale = interpolate(
+      enterEase,
+      [0, 0.72, 1],
+      transitionIn === "PUNCH" ? [1.18, 1.035, 1] : [1.14, 1.018, 1]
+    );
+  }
+
+  if (transitionIn === "FLASH") {
+    flashOpacity = interpolate(enterEase, [0, 0.25, 1], [0.9, 0.25, 0]);
+  }
+
+  if (transitionIn === "MATCH") {
+    transitionScale = interpolate(enterEase, [0, 1], [1.06, 1]);
+    opacity = interpolate(enterEase, [0, 1], [0, 1]);
+  }
+
+  if (transitionOut === "DISSOLVE" || transitionOut === "FADE") {
+    opacity *= exitEase;
+  }
+
+  if (transitionOut === "FLASH") {
+    flashOpacity = Math.max(
+      flashOpacity,
+      interpolate(1 - exitProgress, [0, 0.25, 1], [0, 0.25, 0.75])
+    );
+  }
+
+  // ------------------------------------------------------------
+  // CAMERA / MOTION â€” driven by the Director's motion field.
+  // ------------------------------------------------------------
+  const userX = Number(shot.x) || 0;
+  const userY = Number(shot.y) || 0;
+  const rotation = Number(shot.rotation) || 0;
+
+  let motionX = 0;
+  let motionY = 0;
+  let motionScale = directorZoom;
+  let motionRotation = 0;
+
+  if (motion === "PUSH_IN") {
+    motionScale = directorZoom + 0.015;
+  } else if (motion === "PUSH_OUT") {
+    motionScale = directorZoom + 0.01;
+  } else if (motion === "PAN_LEFT") {
+    motionX = interpolate(progress, [0, 1], [1.8, -1.8]);
+  } else if (motion === "PAN_RIGHT") {
+    motionX = interpolate(progress, [0, 1], [-1.8, 1.8]);
+  } else if (motion === "TILT_UP") {
+    motionY = interpolate(progress, [0, 1], [1.6, -1.6]);
+  } else if (motion === "TILT_DOWN") {
+    motionY = interpolate(progress, [0, 1], [-1.6, 1.6]);
+  } else if (motion === "HANDHELD") {
+    const seed = index * 17.31;
+    motionX = Math.sin(frame * 0.19 + seed) * 0.42;
+    motionY = Math.cos(frame * 0.23 + seed) * 0.34;
+    motionRotation = Math.sin(frame * 0.11 + seed) * 0.18;
+  } else if (motion === "DRIFT") {
+    motionX = interpolate(progress, [0, 1], [-1.1, 1.1]);
+    motionY = interpolate(progress, [0, 1], [0.7, -0.7]);
+  }
+
+  const scale = motionScale * transitionScale;
+  const finalX = motionX + userX + transitionX;
+  const finalY = motionY + userY + transitionY;
+  const finalRotation = rotation + motionRotation;
+
+  const bridgeOpacity = interpolate(
+    enterEase,
+    [0, 0.22, 0.72, 1],
+    [0.0, 0.22, 0.06, 0.0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+
+  const bridgeGradient =
+    transitionIn === "WHIP"
+      ? "linear-gradient(90deg, transparent 0%, rgba(255,255,255,.34) 47%, transparent 100%)"
+      : transitionIn === "SLIDE_LEFT" || transitionIn === "SLIDE_RIGHT"
+        ? "linear-gradient(90deg, transparent 0%, rgba(255,255,255,.16) 50%, transparent 100%)"
+        : "radial-gradient(circle at center, rgba(255,255,255,.22), transparent 58%)";
+
+  // ------------------------------------------------------------
+  // COLOR / VISUAL TREATMENT
+  // ------------------------------------------------------------
+  const preset = colorPreset(shot.color_treatment);
+  const brightness = clamp(Number(shot.brightness) || preset.brightness, 0.65, 1.35);
+  const contrast = clamp(Number(shot.contrast) || preset.contrast, 0.7, 1.5);
+  const saturation = clamp(Number(shot.saturation) || preset.saturation, 0, 1.8);
+  const blur = transitionBlur + clamp(Number(shot.blur) || 0, 0, 12);
+
+  const visualFilter = [
+    `brightness(${brightness})`,
+    `contrast(${contrast})`,
+    `saturate(${saturation})`,
+    blur > 0 ? `blur(${blur}px)` : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  // ------------------------------------------------------------
+  // ON-SCREEN TEXT / KINETIC TYPOGRAPHY
+  // ------------------------------------------------------------
+  const text = String(shot.on_screen_text || "").trim();
+  const textAnimation = String(shot.text_animation || "FADE").toUpperCase();
+  const textStyle = normalizedTextStyle(shot.text_style);
+
+  const textInFrames = Math.min(18, Math.max(5, Math.floor(durationInFrames * 0.16)));
+  const textOutFrames = Math.min(14, Math.max(4, Math.floor(durationInFrames * 0.12)));
+
+  const textOpacityIn = interpolate(frame, [0, textInFrames], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const textOpacityOut = interpolate(
+    frame,
+    [Math.max(0, durationInFrames - textOutFrames), durationInFrames],
+    [1, 0],
+    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+  );
+  const textOpacity = textOpacityIn * textOpacityOut;
+
+  const textSpring = spring({
+    frame: Math.max(0, frame - 2),
+    fps,
+    config: { damping: 18, stiffness: 150, mass: 0.55 },
+  });
+
+  let textTranslateX = 0;
+  let textTranslateY = 0;
+  let textScale = 1;
+  let textRotation = 0;
+
+  if (textAnimation === "SLIDE_UP") {
+    textTranslateY = interpolate(textSpring, [0, 1], [38, 0]);
+  } else if (textAnimation === "SLIDE_DOWN") {
+    textTranslateY = interpolate(textSpring, [0, 1], [-38, 0]);
+  } else if (textAnimation === "SLIDE_LEFT") {
+    textTranslateX = interpolate(textSpring, [0, 1], [70, 0]);
+  } else if (textAnimation === "SLIDE_RIGHT") {
+    textTranslateX = interpolate(textSpring, [0, 1], [-70, 0]);
+  } else if (textAnimation === "POP") {
+    textScale = interpolate(textSpring, [0, 1], [0.78, 1]);
+  } else if (textAnimation === "BOUNCE") {
+    textScale = 0.92 + textSpring * 0.08;
+    textTranslateY = (1 - textSpring) * 24;
+  } else if (textAnimation === "ROTATE") {
+    textRotation = interpolate(textSpring, [0, 1], [-5, 0]);
+    textScale = interpolate(textSpring, [0, 1], [0.94, 1]);
+  } else if (textAnimation === "TYPEWRITER") {
+    // The actual string remains stable for deterministic rendering; the
+    // clip is revealed progressively with a width mask.
+  }
+
+  const isHook = shot.role === "HOOK";
+  const isCTA = shot.role === "CTA";
+  const isMinimal = textStyle === "MINIMAL" || textStyle === "CLEAN";
+  const isAccent = textStyle === "PRICE_ACCENT" || textStyle === "WORD_EMPHASIS";
+
+  const fontSize =
+    Number(shot.text_size) ||
+    (isCTA ? 68 : isHook ? 72 : 52);
+
+  const fontFamily =
+    brand?.fontFamily ||
+    (isHook || isCTA
+      ? 'Inter, "Arial Black", "Segoe UI", Arial, sans-serif'
+      : 'Inter, "Segoe UI", Arial, sans-serif');
+
+  const textColor = shot.text_color || brand?.primaryColor || "#FFFFFF";
+  const secondaryColor = brand?.secondaryColor || "#C8FF2B";
+  const displayText = isMinimal ? text : text.toUpperCase();
+  const words = displayText.split(/\s+/).filter(Boolean);
+  const wordStagger = Math.max(
+    2,
+    Math.floor(Math.min(7, durationInFrames * 0.045))
+  );
+  const wordReveal =
+    textAnimation === "WORD_POP" ||
+    textAnimation === "WORD_REVEAL";
+
+  const textShadow =
+    textStyle === "OUTLINE"
+      ? `0 0 0 #000, 3px 0 0 #000, -3px 0 0 #000, 0 3px 0 #000, 0 -3px 0 #000`
+      : "0 5px 20px rgba(0,0,0,.72)";
+
+  const textBackground =
+    textStyle === "BOX" || textStyle === "LABEL"
+      ? "rgba(0,0,0,.62)"
+      : "transparent";
+
+  const textBorderRadius = textStyle === "LABEL" ? 14 : 0;
+  const textPadding = textStyle === "BOX" || textStyle === "LABEL" ? "12px 20px" : "10px 18px";
+
+  // ------------------------------------------------------------
+  // CAPTION TIMELINE
+  // ------------------------------------------------------------
+  const activeCaption = captions.find((caption) => {
+    const localTime = Number(shot.start) + frame / fps;
+    return localTime >= caption.start && localTime <= caption.end;
+  });
+
+  const captionPosition = textPosition(activeCaption?.position || "BOTTOM");
+  const captionStyle = String(activeCaption?.style || "CLEAN").toUpperCase();
+
+  return (
+    <AbsoluteFill style={{ overflow: "hidden", background: "#050505" }}>
+      <AbsoluteFill style={{ opacity, overflow: "hidden" }}>
+        <OffthreadVideo
+          src={src}
+          muted={Number(shot.source_audio_volume || 0) <= 0}
+          volume={clamp(Number(shot.source_audio_volume) || 0, 0, 1)}
+          startFrom={Math.max(0, Math.floor((Number(shot.start) || 0) * fps))}
+          playbackRate={speed}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            objectPosition: cropPosition(shot.crop),
+            filter: visualFilter,
+            transform: `translateX(${finalX}%) translateY(${finalY}%) rotate(${finalRotation}deg) scale(${scale})`,
+          }}
+        />
+      </AbsoluteFill>
+
+      <AbsoluteFill
+        style={{
+          pointerEvents: "none",
+          background:
+            "radial-gradient(circle at center, transparent 45%, rgba(0,0,0,.28) 100%)",
+          opacity: 0.72,
+        }}
+      />
+
+      {flashOpacity > 0 ? (
+        <AbsoluteFill
+          style={{
+            pointerEvents: "none",
+            background: "white",
+            opacity: flashOpacity,
+          }}
+        />
+      ) : null}
+
+      {transitionIn !== "CUT" && transitionIn !== "DISSOLVE" && transitionIn !== "FADE" ? (
+        <AbsoluteFill
+          style={{
+            pointerEvents: "none",
+            opacity: bridgeOpacity,
+            background: bridgeGradient,
+            transform:
+              transitionIn === "WHIP"
+                ? `translateX(${interpolate(enterEase, [0, 1], [-42, 42])}%) skewX(-10deg)`
+                : transitionIn === "SLIDE_LEFT"
+                  ? `translateX(${interpolate(enterEase, [0, 1], [34, -10])}%)`
+                  : transitionIn === "SLIDE_RIGHT"
+                    ? `translateX(${interpolate(enterEase, [0, 1], [-34, 10])}%)`
+                    : "scale(1.06)",
+            filter: transitionIn === "WHIP" ? "blur(1.5px)" : "none",
+          }}
+        />
+      ) : null}
+
+      {text ? (
+        <div
+          style={{
+            position: "absolute",
+            left: isHook || isCTA ? 72 : 62,
+            right: isHook || isCTA ? 72 : 62,
+            ...textPosition(shot.text_position),
+            opacity: textOpacity * opacity,
+            transform: `translateX(${textTranslateX}px) translateY(${textTranslateY}px) rotate(${textRotation}deg) scale(${textScale})`,
+            transformOrigin: "center",
+            fontFamily,
+            fontWeight: Number(shot.text_weight) || (isHook || isCTA ? 950 : 800),
+            fontSize,
+            lineHeight: isHook || isCTA ? 0.9 : 1.0,
+            letterSpacing: isHook ? -2.4 : isCTA ? -1.7 : isAccent ? -0.7 : 0.2,
+            color: textColor,
+            textAlign: isHook || isCTA ? "left" : "center",
+            textShadow,
+            background: textBackground,
+            borderRadius: textBorderRadius,
+            padding: textPadding,
+            whiteSpace: "pre-wrap",
+            textTransform: isMinimal ? "none" : "uppercase",
+            maxWidth: "100%",
+          }}
+        >
+          {wordReveal
+            ? words.map((word, wordIndex) => {
+                const local = interpolate(
+                  frame,
+                  [2 + wordIndex * wordStagger, 7 + wordIndex * wordStagger],
+                  [0, 1],
+                  { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
+                );
+                return (
+                  <span
+                    key={`${word}-${wordIndex}`}
+                    style={{
+                      display: "inline-block",
+                      marginRight: wordIndex === words.length - 1 ? 0 : 10,
+                      opacity: local,
+                      transform: `translateY(${(1 - local) * 18}px) scale(${0.94 + local * 0.06})`,
+                      color:
+                        (Array.isArray(shot.emphasis_words) && shot.emphasis_words.some((w) => String(w).toLowerCase() === word.replace(/[^\p{L}\p{N}]/gu, "").toLowerCase())) ||
+                        (isAccent && wordIndex === words.length - 1)
+                          ? secondaryColor
+                          : textColor,
+                    }}
+                  >
+                    {word}
+                  </span>
+                );
+              })
+            : displayText}
+        </div>
+      ) : null}
+
+      {text && (isHook || isCTA || isAccent) ? (
+        <div
+          style={{
+            position: "absolute",
+            ...textPosition(shot.text_position),
+            left: isHook || isCTA ? 72 : "50%",
+            marginTop: isHook || isCTA ? 92 : 78,
+            width: interpolate(
+              textSpring,
+              [0, 1],
+              [0, isCTA ? 180 : isHook ? 150 : 90]
+            ),
+            height: 5,
+            borderRadius: 99,
+            background: secondaryColor,
+            opacity: textOpacity * opacity * 0.92,
+            boxShadow: `0 0 18px ${secondaryColor}66`,
+            transform: isHook || isCTA ? "none" : "translateX(-50%)",
+          }}
+        />
+      ) : null}
+
+      {activeCaption ? (
+        <div
+          style={{
+            position: "absolute",
+            left: 65,
+            right: 65,
+            ...captionPosition,
+            textAlign: "center",
+            fontFamily,
+            fontWeight: activeCaption.emphasis ? 950 : 750,
+            fontSize: activeCaption.emphasis ? 48 : 43,
+            lineHeight: 1.05,
+            color:
+              activeCaption.emphasis || captionStyle === "HIGHLIGHT"
+                ? secondaryColor
+                : "#FFFFFF",
+            textShadow:
+              captionStyle === "OUTLINE"
+                ? "2px 0 #000,-2px 0 #000,0 2px #000,0 -2px #000"
+                : "0 4px 18px rgba(0,0,0,.85)",
+          }}
+        >
+          {activeCaption.text}
+        </div>
+      ) : null}
+
+    </AbsoluteFill>
+  );
+};
+
+export const AtlasRemotionEdit: React.FC<Props> = (props) => {
+  const { fps } = useVideoConfig();
+  let cursor = 0;
+  const shotRanges: Array<{ from: number; frames: number; shot: Shot }> = [];
+
+  return (
+    <AbsoluteFill style={{ background: "#050505" }}>
+      {props.shots.map((shot, index) => {
+        const sourceDuration = Math.max(0.25, Number(shot.end) - Number(shot.start));
+        const curve = Array.isArray(shot.speed_curve) && shot.speed_curve.length > 1 ? shot.speed_curve : [{ at: 0, speed: Number(shot.speed) || 1 }, { at: 1, speed: Number(shot.speed) || 1 }];
+        const avgSpeed = curve.reduce((sum: number, p: any, i: number) => {
+          const prev = i === 0 ? curve[0] : curve[i - 1];
+          const width = Math.max(0, Number(p.at || 0) - Number(prev.at || 0));
+          return sum + width / Math.max(0.5, Number(prev.speed) || 1);
+        }, 0) || (1 / Math.max(0.5, Number(shot.speed) || 1));
+        const renderedSeconds = sourceDuration * avgSpeed;
+        const frames = Math.max(1, Math.round(renderedSeconds * fps));
+        const from = cursor;
+        cursor += frames;
+        shotRanges.push({ from, frames, shot });
+
+        const asset = props.assets[shot.source_filename];
+        if (!asset) return null;
+
+        return (
+          <Sequence
+            key={`${shot.id}-${index}`}
+            from={from}
+            durationInFrames={frames}
+            layout="none"
+          >
+            <ShotLayer
+              shot={shot}
+              src={staticFile(asset)}
+              durationInFrames={frames}
+              index={index}
+              captions={props.captions || []}
+              brand={props.brand}
+            />
+          </Sequence>
+        );
+      })}
+
+      {props.voice ? (
+        <Audio src={staticFile(props.voice)} volume={1} />
+      ) : null}
+
+      {props.music ? (
+        <Audio
+          src={staticFile(props.music)}
+          volume={(frame) => {
+            const globalBase = clamp(Number(props.musicVolume) || 0.12, 0, 1);
+            const active = shotRanges.find((r) => frame >= r.from && frame < r.from + r.frames);
+            let localLevel = active ? curveValue(active.shot.music_curve, clamp((frame - active.from) / Math.max(1, active.frames - 1), 0, 1), "level", Number(active.shot.music_volume) || 0.65) : 1;
+            const base = clamp(globalBase * (0.55 + localLevel * 0.65), 0, 1);
+            if (!props.voice || props.musicDucking === false) return base;
+
+            const priority = String(props.voicePriority || "HIGH").toUpperCase();
+            const db = Number(props.musicDuckingDb) || (priority === "HIGH" ? 12 : 9);
+            const linear = Math.pow(10, -Math.abs(db) / 20);
+            const time = frame / fps;
+            const duck = (props.captions || []).reduce((maxGain, caption) => {
+              const start = Number(caption.start || 0);
+              const end = Number(caption.end || start);
+              const fadeIn = 0.07;
+              const fadeOut = 0.12;
+              const inGain = clamp((time - start) / fadeIn, 0, 1);
+              const outGain = clamp((end - time) / fadeOut, 0, 1);
+              return Math.max(maxGain, inGain * outGain);
+            }, 0);
+
+            // If no captions are available, keep voice-over music conservative.
+            const duckAmount = (props.captions || []).length ? duck : 0.72;
+            return base * (1 - duckAmount + duckAmount * linear);
+          }}
+        />
+      ) : null}
+
+      {(props.sfx || []).map((effect, index) => {
+        if (!effect.source) return null;
+
+        const startFrame = Math.max(
+          0,
+          Math.round((Number(effect.start) || 0) * fps)
+        );
+        const durationFrames = Math.max(
+          1,
+          Math.round((Number(effect.duration) || 1) * fps)
+        );
+        const fadeInFrames = Math.max(
+          0,
+          Math.round((Number(effect.fadeIn) || 0.04) * fps)
+        );
+        const fadeOutFrames = Math.max(
+          0,
+          Math.round((Number(effect.fadeOut) || 0.06) * fps)
+        );
+
+        return (
+          <Sequence
+            key={`sfx-${index}`}
+            from={startFrame}
+            durationInFrames={durationFrames}
+          >
+            <Audio
+              src={staticFile(effect.source)}
+              volume={(frame) => {
+                const base = clamp(Number(effect.volume) || 0.5, 0, 1);
+                const inGain =
+                  fadeInFrames > 0
+                    ? interpolate(frame, [0, fadeInFrames], [0, 1], {
+                        extrapolateLeft: "clamp",
+                        extrapolateRight: "clamp",
+                      })
+                    : 1;
+                const outGain =
+                  fadeOutFrames > 0
+                    ? interpolate(
+                        frame,
+                        [Math.max(0, durationFrames - fadeOutFrames), durationFrames],
+                        [1, 0],
+                        {
+                          extrapolateLeft: "clamp",
+                          extrapolateRight: "clamp",
+                        }
+                      )
+                    : 1;
+                return base * inGain * outGain;
+              }}
+            />
+          </Sequence>
+        );
+      })}
+    </AbsoluteFill>
+  );
+};
+
+==================== app/api/render-remotion/route.ts ====================
+
+import { NextRequest, NextResponse } from "next/server";
+import { promises as fs } from "fs";
+import path from "path";
+import os from "os";
+import crypto from "crypto";
+import { renderAtlasWithRemotion } from "@/app/lib/atlas/remotion-engine";
+import { designAndGenerateSfx } from "@/app/lib/atlas/sfx-director";
+import { deriveSfxEvents, normalizeMusicCurve, normalizeSpeedCurve, validateExecutableTimeline } from "@/app/lib/atlas/atlas-edit-contract";
+import { atlasRunEvent, getAtlasRunId, syncAtlasRunToGit, writeAtlasRunSummary } from "@/app/lib/atlas/atlas-run-logger";
+
+export const runtime = "nodejs";
+
+type TimelineBeat = {
+  id?: string; source_filename: string; source_start: number; source_end: number;
+  role?: string; purpose?: string; cut_reason?: string; transition_in?: string; transition_out?: string;
+  motion?: string; zoom_start?: number; zoom_end?: number; speed?: number;
+  speed_curve?: Array<{at?: number; speed?: number}>; text?: string; text_style?: string;
+  text_animation?: string; text_position?: string; emphasis_words?: string[]; sfx?: string[];
+  sfx_events?: Array<{ type?: string; at?: number; volume?: number }>; beat_intent?: string; cut_on?: string;
+  source_audio_volume?: number; music_volume?: number; music_curve?: Array<{at?: number; level?: number}>;
+  color_treatment?: string; crop_focus?: string; editorial_score?: number;
+};
+
+function createReviewId() { return `${Date.now().toString(16)}-${crypto.randomUUID().replace(/-/g, "")}`; }
+function cleanRole(value: unknown) { const role = String(value || "STORY").toUpperCase(); return ["HOOK", "STORY", "PAYOFF", "CTA"].includes(role) ? role : "STORY"; }
+function cleanTransition(value: unknown) { const valueUpper = String(value || "CUT").toUpperCase(); return ["CUT", "DISSOLVE", "FADE", "WHIP", "MATCH", "ZOOM", "PUNCH", "SLIDE_LEFT", "SLIDE_RIGHT", "SLIDE_UP", "SLIDE_DOWN", "FLASH", "NONE"].includes(valueUpper) ? valueUpper : "CUT"; }
+function cleanCrop(value: unknown) { const valueUpper = String(value || "CENTER").toUpperCase(); return ["NONE", "CENTER", "FACE", "PRODUCT", "ACTION", "TOP", "BOTTOM", "LEFT", "RIGHT"].includes(valueUpper) ? valueUpper : "CENTER"; }
+function cleanSpeed(value: unknown) { const n = Number(value); if (!Number.isFinite(n)) return 1; return Math.max(0.25, Math.min(3, n)); }
+function cleanZoom(value: unknown) { const n = Number(value); if (!Number.isFinite(n)) return 1.04; return Math.max(1, Math.min(1.45, n)); }
+function finiteNumber(value: unknown): number | null { const n = Number(value); return Number.isFinite(n) ? n : null; }
+
+function normalizeBeat(beat: TimelineBeat, index: number) {
+  const rawStart = finiteNumber(beat.source_start) ?? finiteNumber((beat as any).start);
+  const rawEnd = finiteNumber(beat.source_end) ?? finiteNumber((beat as any).end);
+  const start = Math.max(0, rawStart ?? 0); const end = Math.max(start + 0.25, rawEnd ?? start + 1);
+  const zoomStart = cleanZoom(beat.zoom_start); const zoomEnd = cleanZoom(beat.zoom_end); const zoom = zoomStart;
+  return {
+    id: String(beat.id || `beat-${index + 1}`), role: cleanRole(beat.role), source_filename: String(beat.source_filename || ""),
+    source_start: start, source_end: end, start, end, purpose: String(beat.purpose || beat.cut_reason || ""),
+    visual_action: String(beat.motion || ""), visual_treatment: String(beat.color_treatment || ""), crop: cleanCrop(beat.crop_focus),
+    zoom, zoom_start: zoomStart, zoom_end: zoomEnd, transition_in: cleanTransition(beat.transition_in), transition_out: cleanTransition(beat.transition_out),
+    on_screen_text: String(beat.text || ""), caption_mode: "NONE", caption_emphasis: Array.isArray(beat.emphasis_words) ? beat.emphasis_words.map(String) : [],
+    music_intensity: Number(beat.music_volume) || 0, voice_priority: 1, speed: cleanSpeed(beat.speed),
+    speed_curve: normalizeSpeedCurve(beat.speed_curve, cleanSpeed(beat.speed)), motion: String(beat.motion || ""),
+    text_style: String(beat.text_style || ""), text_animation: String(beat.text_animation || "FADE"), text_position: String(beat.text_position || ""),
+    sfx: Array.isArray(beat.sfx) ? beat.sfx.map(String) : [], sfx_events: deriveSfxEvents(beat.sfx, beat.sfx_events, Math.max(0, end - start)),
+    music_curve: normalizeMusicCurve(beat.music_curve, Number(beat.music_volume) || 0.65), beat_intent: String(beat.beat_intent || ""),
+    cut_on: String(beat.cut_on || ""), editorial_score: Number(beat.editorial_score) || 0,
+  };
+}
+
+export async function POST(request: NextRequest) {
+  const runId = getAtlasRunId(request); const startedAt = Date.now();
+  try {
+    await atlasRunEvent(runId, "REMOTION", "START", {});
+    console.log("================================"); console.log("ATLAS PRO EDITOR V2 â€” REMOTION"); console.log("================================");
+    const formData = await request.formData();
+    const files = formData.getAll("clips").filter((value): value is File => value instanceof File);
+    if (!files.length) return NextResponse.json({ error: "No video clips were uploaded." }, { status: 400 });
+    const timelineRaw = formData.get("editTimeline");
+    if (typeof timelineRaw !== "string") return NextResponse.json({ error: "No executable editTimeline was supplied." }, { status: 400 });
+    let parsedTimeline: any = null;
+    try { parsedTimeline = JSON.parse(timelineRaw); } catch { return NextResponse.json({ error: "editTimeline is not valid JSON." }, { status: 400 }); }
+    const rawTimeline: TimelineBeat[] = Array.isArray(parsedTimeline) ? parsedTimeline : Array.isArray(parsedTimeline?.timeline) ? parsedTimeline.timeline : [];
+    if (rawTimeline.length < 1) return NextResponse.json({ error: "Executable editTimeline contains no beats." }, { status: 400 });
+    const uploadedNames = new Set(files.map((file) => file.name));
+    const shots = rawTimeline.map(normalizeBeat).filter((shot) => uploadedNames.has(shot.source_filename));
+    validateExecutableTimeline(shots, files.map((f) => ({ filename: f.name })));
+    await atlasRunEvent(runId, "VALIDATION", "PASS", { beats: shots.length, files: files.length });
+    if (!shots.length) return NextResponse.json({ error: "None of the Edit Director timeline sources match uploaded clips." }, { status: 400 });
+    console.log(`[ATLAS PRO EDITOR V2] EXECUTABLE TIMELINE READY | beats=${shots.length}`);
+    console.log(`[ATLAS V2 FEATURES] speedRamps=${shots.filter((s:any) => s.speed_curve?.some((p:any) => Math.abs(Number(p.speed) - Number(s.speed_curve?.[0]?.speed || p.speed)) > 0.08)).length} | sfxEvents=${shots.reduce((n:number,s:any) => n + (s.sfx_events?.length || 0), 0)} | musicCurves=${shots.length} | text=${shots.filter((s:any) => String(s.on_screen_text || "").trim()).length} | transitions=${shots.filter((s:any) => s.transition_in !== "CUT" || s.transition_out !== "CUT").length}`);
+    shots.forEach((shot, index) => console.log(`[ATLAS V2 SHOT ${index + 1}] ${shot.role} | ${shot.source_filename} | ${shot.start.toFixed(2)}-${shot.end.toFixed(2)} | motion=${shot.motion} | transition=${shot.transition_in}->${shot.transition_out}`));
+
+    const voiceValue = formData.get("voice"); const voiceFile = voiceValue instanceof File && voiceValue.size > 0 ? voiceValue : null;
+    const musicValue = formData.get("music"); const musicFile = musicValue instanceof File && musicValue.size > 0 ? musicValue : null;
+    let captions: any[] = []; const captionsRaw = formData.get("captions");
+    if (typeof captionsRaw === "string") { try { const parsed = JSON.parse(captionsRaw); captions = Array.isArray(parsed) ? parsed : []; } catch { captions = []; } }
+    let brand: any = undefined; const businessProfileRaw = formData.get("businessProfile");
+    if (typeof businessProfileRaw === "string") {
+      try { const profile = JSON.parse(businessProfileRaw); brand = { primaryColor: profile?.brand_colors?.primary || profile?.primaryColor || "#FFFFFF", secondaryColor: profile?.brand_colors?.accent || profile?.secondaryColor || "#C8FF2B", fontFamily: profile?.brand_font || profile?.fontFamily, logo: profile?.logo_url || profile?.logo }; } catch { brand = undefined; }
+    }
+    const musicVolume = shots.length ? shots.reduce((sum, shot) => sum + Number(shot.music_intensity || 0.12), 0) / shots.length : 0.12;
+    let executableShots = shots;
+
+    if (process.env.ATLAS_AI_SFX_ENABLED !== "false") {
+      await atlasRunEvent(runId, "SFX_DIRECTOR", "START", { beats: shots.length });
+      const sfxResult = await designAndGenerateSfx(files, shots); executableShots = sfxResult.shots;
+      console.log(`[ATLAS SFX DIRECTOR] READY | generatedEvents=${sfxResult.events.length}`);
+      await atlasRunEvent(runId, "SFX_DIRECTOR", "COMPLETE", { generatedEvents: sfxResult.events.length });
+    }
+
+    executableShots.forEach((shot: any, index: number) => console.log(`[ATLAS SFX-AWARE SHOT ${index + 1}] ${shot.role} | sfxEvents=${Array.isArray(shot.sfx_events) ? shot.sfx_events.length : 0}`));
+    await atlasRunEvent(runId, "REMOTION", "EXECUTION_PLAN", { beats: executableShots.length, sfxEvents: executableShots.reduce((n: number, s: any) => n + (Array.isArray(s.sfx_events) ? s.sfx_events.length : 0), 0), speedRamps: executableShots.filter((s: any) => Array.isArray(s.speed_curve) && s.speed_curve.length > 1).length });
+
+    const remotionBuffer = await renderAtlasWithRemotion({ files, shots: executableShots, voiceFile, musicFile, musicVolume: Math.max(0.04, Math.min(0.24, musicVolume)), captions, brand, musicDucking: true, voicePriority: "HIGH", musicDuckingDb: 12 });
+    const reviewDir = path.join(os.tmpdir(), "atlas-render-review-cache"); await fs.mkdir(reviewDir, { recursive: true });
+    const reviewId = createReviewId(); const reviewPath = path.join(reviewDir, `${reviewId}.mp4`); await fs.writeFile(reviewPath, remotionBuffer);
+    const timelineAuditPath = path.join(reviewDir, `${reviewId}.json`);
+    await fs.writeFile(timelineAuditPath, JSON.stringify({ version: "ATLAS-AI-SFX-V1", timeline: executableShots, audio_design: { mode: process.env.ATLAS_AI_SFX_ENABLED === "false" ? "disabled" : "ai-generated", generated_sfx_events: executableShots.reduce((sum: number, shot: any) => sum + (Array.isArray(shot.sfx_events) ? shot.sfx_events.length : 0), 0) } }, null, 2), "utf8");
+    console.log("ATLAS V2 REVIEW CACHE CREATED:", reviewId, reviewPath); console.log("ATLAS V2 EXECUTION AUDIT CREATED:", timelineAuditPath);
+
+    await atlasRunEvent(runId, "REMOTION", "COMPLETE", { reviewId, bytes: remotionBuffer.length, durationMs: Date.now() - startedAt });
+    await writeAtlasRunSummary(runId, { status: "COMPLETE", reviewId, durationMs: Date.now() - startedAt, beats: executableShots.length, files: files.length, sfxEvents: executableShots.reduce((n: number, s: any) => n + (Array.isArray(s.sfx_events) ? s.sfx_events.length : 0), 0), reviewPath, timelineAuditPath });
+
+    // Never block the browser response on diagnostics/GitHub sync.
+    // The render is already complete at this point; syncing is observability only.
+    void syncAtlasRunToGit(runId)
+      .then((syncResult) => console.log(`[ATLAS RUN ${runId}] RUN_SYNC | synced=${syncResult.synced} | reason=${syncResult.reason || ""}`))
+      .catch((syncError: any) => console.warn(`[ATLAS RUN ${runId}] RUN_SYNC WARN | ${syncError?.message || String(syncError)}`));
+
+    console.log(`[ATLAS RUN ${runId}] REMOTION HTTP RESPONSE READY | reviewId=${reviewId} | bytes=${remotionBuffer.length}`);
+    return new NextResponse(remotionBuffer, { status: 200, headers: { "Content-Type": "video/mp4", "Content-Disposition": 'attachment; filename="atlas-v2-reel.mp4"', "Content-Length": String(remotionBuffer.length), "Cache-Control": "no-store", "X-Atlas-Review-Id": reviewId, "X-Atlas-Render-Engine": "remotion-v2", "X-Atlas-SFX-Mode": process.env.ATLAS_AI_SFX_ENABLED === "false" ? "off" : "ai-generated", "X-Atlas-SFX-Events": String(executableShots.reduce((sum: number, shot: any) => sum + (Array.isArray(shot.sfx_events) ? shot.sfx_events.length : 0), 0)), "Access-Control-Expose-Headers": "X-Atlas-Review-Id, X-Atlas-Render-Engine, X-Atlas-SFX-Mode, X-Atlas-SFX-Events" } });
+  } catch (error: any) {
+    await atlasRunEvent(runId, "REMOTION", "ERROR", { message: error?.message || String(error), durationMs: Date.now() - startedAt }, "error");
+    await writeAtlasRunSummary(runId, { status: "ERROR", durationMs: Date.now() - startedAt, error: error?.message || String(error) });
+    void syncAtlasRunToGit(runId)
+      .then((syncResult) => console.log(`[ATLAS RUN ${runId}] RUN_SYNC | synced=${syncResult.synced} | reason=${syncResult.reason || ""}`))
+      .catch((syncError: any) => console.warn(`[ATLAS RUN ${runId}] RUN_SYNC WARN | ${syncError?.message || String(syncError)}`));
+    console.error("ATLAS PRO EDITOR V2 REMOTION ERROR", error);
+    return NextResponse.json({ error: error?.message || error?.stderr || "ATLAS V2 Remotion render failed." }, { status: 500 });
+  }
+}

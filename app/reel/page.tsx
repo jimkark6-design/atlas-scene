@@ -1112,6 +1112,16 @@ export default function ReelPage() {
       );
     }
 
+    formData.append(
+      "clipAnalyses",
+      JSON.stringify(
+        analysis.map((item: any) => ({
+          filename: String(item.filename || ""),
+          duration: Number(item.duration || 0),
+        }))
+      )
+    );
+
     if (activePlan) {
       formData.append(
         "masterPlan",

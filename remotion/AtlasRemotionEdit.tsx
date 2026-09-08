@@ -42,8 +42,9 @@ type Shot = {
   motion?: string;
   transition_in?: string;
   transition_out?: string;
+  transition_duration?: number;
+  transition_direction?: string;
   speed?: number;
-  speed_curve?: Array<{ at?: number; speed?: number }>;
   zoom_start?: number;
   zoom_end?: number;
   source_audio_volume?: number;
@@ -80,7 +81,6 @@ type Props = {
   voice?: string;
   music?: string;
   musicVolume?: number;
-  music_curve?: Array<{ at?: number; level?: number }>;
   musicDucking?: boolean;
   musicDuckingDb?: number;
   voicePriority?: string;
@@ -102,23 +102,6 @@ type Props = {
 
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
-
-const curveValue = (curve: Array<{ at?: number; speed?: number; level?: number }> | undefined, progress: number, key: "speed" | "level", fallback: number) => {
-  if (!Array.isArray(curve) || curve.length < 2) return fallback;
-  const points = curve
-    .map((p) => ({ at: clamp(Number(p.at) || 0, 0, 1), value: clamp(Number(p[key]) || fallback, key === "speed" ? 0.5 : 0, key === "speed" ? 2 : 1) }))
-    .sort((a, b) => a.at - b.at);
-  if (progress <= points[0].at) return points[0].value;
-  for (let i = 1; i < points.length; i++) {
-    if (progress <= points[i].at) {
-      const a = points[i - 1];
-      const b = points[i];
-      const t = (progress - a.at) / Math.max(0.0001, b.at - a.at);
-      return a.value + (b.value - a.value) * t;
-    }
-  }
-  return points[points.length - 1].value;
-};
 
 const cropPosition = (crop?: string) => {
   const value = String(crop || "CENTER").toUpperCase();
@@ -217,8 +200,7 @@ const ShotLayer: React.FC<{
       ? 1
       : clamp(frame / (durationInFrames - 1), 0, 1);
 
-  const baseSpeed = clamp(Number(shot.speed) || 1, 0.25, 3);
-  const speed = curveValue(shot.speed_curve, progress, "speed", baseSpeed);
+  const speed = clamp(Number(shot.speed) || 1, 0.25, 3);
   const zoomStart = clamp(Number(shot.zoom_start ?? shot.zoom) || 1, 1, 1.55);
   const zoomEnd = clamp(Number(shot.zoom_end ?? shot.zoom) || zoomStart, 1, 1.65);
   const directorZoom = interpolate(progress, [0, 1], [zoomStart, zoomEnd], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
@@ -226,18 +208,32 @@ const ShotLayer: React.FC<{
   const transitionOut = transitionName(shot.transition_out);
   const motion = motionName(shot.motion);
 
-  const edge = Math.min(18, Math.max(4, Math.floor(durationInFrames * 0.16)));
-  const enterProgress = clamp(frame / edge, 0, 1);
-  const exitProgress = clamp(
-    (durationInFrames - 1 - frame) / edge,
+  // Transition timing is supplied by Transition Intelligence.
+  // The renderer uses the same duration for the incoming and outgoing
+  // sides so both shots are present during the transition.
+  const transitionFrames = clamp(
+    Math.round((Number(shot.transition_duration) || 0.18) * fps),
+    1,
+    Math.max(1, Math.floor(durationInFrames * 0.45))
+  );
+
+  const transitionDirection = String(shot.transition_direction || "RIGHT")
+    .trim()
+    .toUpperCase();
+
+  const incomingProgress = clamp(frame / transitionFrames, 0, 1);
+  const outgoingProgress = clamp(
+    (frame - (durationInFrames - transitionFrames)) / transitionFrames,
     0,
     1
   );
-  const enterEase = Easing.out(Easing.cubic)(enterProgress);
-  const exitEase = Easing.out(Easing.cubic)(exitProgress);
+  const incomingEase = Easing.out(Easing.cubic)(incomingProgress);
+  const outgoingEase = Easing.in(Easing.cubic)(outgoingProgress);
 
   // ------------------------------------------------------------
-  // TRANSITIONS — execution only, no creative improvisation.
+  // TRANSITIONS — true compositing.
+  // A shot never exposes the root black canvas during a transition.
+  // The previous shot remains underneath while the next shot enters.
   // ------------------------------------------------------------
   let opacity = 1;
   let transitionX = 0;
@@ -246,61 +242,106 @@ const ShotLayer: React.FC<{
   let transitionScale = 1;
   let flashOpacity = 0;
 
-  if (transitionIn === "DISSOLVE" || transitionIn === "FADE") {
-    opacity = enterEase;
+  const hasIncomingTransition = transitionIn !== "CUT" && transitionIn !== "NONE";
+  const hasOutgoingTransition = transitionOut !== "CUT" && transitionOut !== "NONE";
+  const inTransition = hasIncomingTransition && frame < transitionFrames;
+  const outTransition =
+    hasOutgoingTransition && frame >= durationInFrames - transitionFrames;
+
+  if (inTransition) {
+    if (transitionIn === "DISSOLVE" || transitionIn === "FADE") {
+      opacity = incomingEase;
+    }
+
+    if (transitionIn === "WHIP") {
+      // RIGHT means the new shot enters from the right and the old shot
+      // exits to the left. LEFT is the exact inverse. Both are full-frame
+      // layers, so there is no uncovered canvas between them.
+      const fromRight = transitionDirection !== "LEFT";
+      transitionX = interpolate(
+        incomingEase,
+        [0, 1],
+        [fromRight ? 100 : -100, 0]
+      );
+      transitionBlur = interpolate(incomingEase, [0, 0.7, 1], [12, 5, 0]);
+    }
+
+    if (transitionIn === "SLIDE_LEFT") {
+      transitionX = interpolate(incomingEase, [0, 1], [100, 0]);
+    }
+
+    if (transitionIn === "SLIDE_RIGHT") {
+      transitionX = interpolate(incomingEase, [0, 1], [-100, 0]);
+    }
+
+    if (transitionIn === "SLIDE_UP") {
+      transitionY = interpolate(incomingEase, [0, 1], [100, 0]);
+    }
+
+    if (transitionIn === "SLIDE_DOWN") {
+      transitionY = interpolate(incomingEase, [0, 1], [-100, 0]);
+    }
+
+    if (transitionIn === "ZOOM" || transitionIn === "PUNCH") {
+      transitionScale = interpolate(
+        incomingEase,
+        [0, 0.72, 1],
+        transitionIn === "PUNCH" ? [1.22, 1.05, 1] : [1.16, 1.025, 1]
+      );
+    }
+
+    if (transitionIn === "FLASH") {
+      flashOpacity = interpolate(
+        incomingEase,
+        [0, 0.25, 1],
+        [0.9, 0.25, 0]
+      );
+    }
+
+    if (transitionIn === "MATCH") {
+      transitionScale = interpolate(incomingEase, [0, 1], [1.06, 1]);
+      opacity = incomingEase;
+    }
   }
 
-  if (transitionIn === "WHIP") {
-    transitionX = interpolate(
-      enterEase,
-      [0, 1],
-      [index % 2 === 0 ? -11 : 11, 0]
-    );
-    transitionBlur = interpolate(enterEase, [0, 1], [10, 0]);
-  }
+  // Animate the outgoing side too. Because the previous shot and this shot
+  // overlap in the parent timeline, this motion happens above a real frame
+  // from the preceding shot rather than over black.
+  if (outTransition) {
+    if (transitionOut === "WHIP") {
+      const toLeft = transitionDirection !== "LEFT";
+      transitionX = interpolate(
+        outgoingEase,
+        [0, 1],
+        [0, toLeft ? -100 : 100]
+      );
+      transitionBlur = Math.max(
+        transitionBlur,
+        interpolate(outgoingEase, [0, 0.35, 1], [0, 6, 12])
+      );
+    }
 
-  if (transitionIn === "SLIDE_LEFT") {
-    transitionX = interpolate(enterEase, [0, 1], [100, 0]);
-  }
+    if (transitionOut === "ZOOM" || transitionOut === "PUNCH") {
+      transitionScale = Math.max(
+        transitionScale,
+        interpolate(
+          outgoingEase,
+          [0, 1],
+          [1, transitionOut === "PUNCH" ? 1.12 : 1.08]
+        )
+      );
+    }
 
-  if (transitionIn === "SLIDE_RIGHT") {
-    transitionX = interpolate(enterEase, [0, 1], [-100, 0]);
-  }
+    if (transitionOut === "FLASH") {
+      flashOpacity = Math.max(
+        flashOpacity,
+        interpolate(outgoingEase, [0, 0.25, 1], [0, 0.25, 0.75])
+      );
+    }
 
-  if (transitionIn === "SLIDE_UP") {
-    transitionY = interpolate(enterEase, [0, 1], [100, 0]);
-  }
-
-  if (transitionIn === "SLIDE_DOWN") {
-    transitionY = interpolate(enterEase, [0, 1], [-100, 0]);
-  }
-
-  if (transitionIn === "ZOOM" || transitionIn === "PUNCH") {
-    transitionScale = interpolate(
-      enterEase,
-      [0, 0.72, 1],
-      transitionIn === "PUNCH" ? [1.18, 1.035, 1] : [1.14, 1.018, 1]
-    );
-  }
-
-  if (transitionIn === "FLASH") {
-    flashOpacity = interpolate(enterEase, [0, 0.25, 1], [0.9, 0.25, 0]);
-  }
-
-  if (transitionIn === "MATCH") {
-    transitionScale = interpolate(enterEase, [0, 1], [1.06, 1]);
-    opacity = interpolate(enterEase, [0, 1], [0, 1]);
-  }
-
-  if (transitionOut === "DISSOLVE" || transitionOut === "FADE") {
-    opacity *= exitEase;
-  }
-
-  if (transitionOut === "FLASH") {
-    flashOpacity = Math.max(
-      flashOpacity,
-      interpolate(1 - exitProgress, [0, 0.25, 1], [0, 0.25, 0.75])
-    );
+    if (transitionOut === "DISSOLVE" || transitionOut === "FADE") {
+      opacity *= 1 - outgoingEase;
+    }
   }
 
   // ------------------------------------------------------------
@@ -342,19 +383,6 @@ const ShotLayer: React.FC<{
   const finalY = motionY + userY + transitionY;
   const finalRotation = rotation + motionRotation;
 
-  const bridgeOpacity = interpolate(
-    enterEase,
-    [0, 0.22, 0.72, 1],
-    [0.0, 0.22, 0.06, 0.0],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp" }
-  );
-
-  const bridgeGradient =
-    transitionIn === "WHIP"
-      ? "linear-gradient(90deg, transparent 0%, rgba(255,255,255,.34) 47%, transparent 100%)"
-      : transitionIn === "SLIDE_LEFT" || transitionIn === "SLIDE_RIGHT"
-        ? "linear-gradient(90deg, transparent 0%, rgba(255,255,255,.16) 50%, transparent 100%)"
-        : "radial-gradient(circle at center, rgba(255,255,255,.22), transparent 58%)";
 
   // ------------------------------------------------------------
   // COLOR / VISUAL TREATMENT
@@ -518,25 +546,6 @@ const ShotLayer: React.FC<{
         />
       ) : null}
 
-      {transitionIn !== "CUT" && transitionIn !== "DISSOLVE" && transitionIn !== "FADE" ? (
-        <AbsoluteFill
-          style={{
-            pointerEvents: "none",
-            opacity: bridgeOpacity,
-            background: bridgeGradient,
-            transform:
-              transitionIn === "WHIP"
-                ? `translateX(${interpolate(enterEase, [0, 1], [-42, 42])}%) skewX(-10deg)`
-                : transitionIn === "SLIDE_LEFT"
-                  ? `translateX(${interpolate(enterEase, [0, 1], [34, -10])}%)`
-                  : transitionIn === "SLIDE_RIGHT"
-                    ? `translateX(${interpolate(enterEase, [0, 1], [-34, 10])}%)`
-                    : "scale(1.06)",
-            filter: transitionIn === "WHIP" ? "blur(1.5px)" : "none",
-          }}
-        />
-      ) : null}
-
       {text ? (
         <div
           style={{
@@ -642,6 +651,28 @@ const ShotLayer: React.FC<{
         </div>
       ) : null}
 
+      {(shot.sfx_events || []).map((event, eventIndex) => {
+        const source = sfxSource(event.type);
+        if (!source) return null;
+        const start = Math.max(0, Number(event.at) || 0);
+        const maxDuration = Math.max(0.08, durationInFrames / fps - start);
+        const duration = Math.min(0.7, maxDuration);
+        const startFrame = Math.round(start * fps);
+        const durationFrames = Math.max(1, Math.round(duration * fps));
+        return (
+          <Sequence key={`shot-sfx-${eventIndex}`} from={startFrame} durationInFrames={durationFrames}>
+            <Audio
+              src={staticFile(source)}
+              volume={(localFrame) => {
+                const p = clamp(localFrame / Math.max(1, durationFrames - 1), 0, 1);
+                const fadeIn = Math.min(1, p / 0.12);
+                const fadeOut = Math.min(1, (1 - p) / 0.18);
+                return clamp(Number(event.volume) || 0.18, 0, 1) * fadeIn * fadeOut;
+              }}
+            />
+          </Sequence>
+        );
+      })}
     </AbsoluteFill>
   );
 };
@@ -649,23 +680,30 @@ const ShotLayer: React.FC<{
 export const AtlasRemotionEdit: React.FC<Props> = (props) => {
   const { fps } = useVideoConfig();
   let cursor = 0;
-  const shotRanges: Array<{ from: number; frames: number; shot: Shot }> = [];
 
   return (
     <AbsoluteFill style={{ background: "#050505" }}>
       {props.shots.map((shot, index) => {
         const sourceDuration = Math.max(0.25, Number(shot.end) - Number(shot.start));
-        const curve = Array.isArray(shot.speed_curve) && shot.speed_curve.length > 1 ? shot.speed_curve : [{ at: 0, speed: Number(shot.speed) || 1 }, { at: 1, speed: Number(shot.speed) || 1 }];
-        const avgSpeed = curve.reduce((sum: number, p: any, i: number) => {
-          const prev = i === 0 ? curve[0] : curve[i - 1];
-          const width = Math.max(0, Number(p.at || 0) - Number(prev.at || 0));
-          return sum + width / Math.max(0.5, Number(prev.speed) || 1);
-        }, 0) || (1 / Math.max(0.5, Number(shot.speed) || 1));
-        const renderedSeconds = sourceDuration * avgSpeed;
-        const frames = Math.max(1, Math.round(renderedSeconds * fps));
+        const frames = Math.max(
+          1,
+          Math.round(sourceDuration * fps / Math.max(0.25, Number(shot.speed) || 1))
+        );
+
+        // The incoming transition belongs to this shot. Pull this Sequence
+        // backwards by the transition duration so the previous shot remains
+        // underneath it for the entire transition.
+        const requestedTransitionFrames =
+          index > 0 && transitionName(shot.transition_in) !== "CUT" && transitionName(shot.transition_in) !== "NONE"
+            ? Math.round((Number(shot.transition_duration) || 0.18) * fps)
+            : 0;
+        const overlapFrames = Math.min(
+          Math.max(0, frames - 1),
+          Math.max(0, requestedTransitionFrames)
+        );
+
         const from = cursor;
-        cursor += frames;
-        shotRanges.push({ from, frames, shot });
+        cursor += frames - overlapFrames;
 
         const asset = props.assets[shot.source_filename];
         if (!asset) return null;
@@ -697,10 +735,7 @@ export const AtlasRemotionEdit: React.FC<Props> = (props) => {
         <Audio
           src={staticFile(props.music)}
           volume={(frame) => {
-            const globalBase = clamp(Number(props.musicVolume) || 0.12, 0, 1);
-            const active = shotRanges.find((r) => frame >= r.from && frame < r.from + r.frames);
-            let localLevel = active ? curveValue(active.shot.music_curve, clamp((frame - active.from) / Math.max(1, active.frames - 1), 0, 1), "level", Number(active.shot.music_volume) || 0.65) : 1;
-            const base = clamp(globalBase * (0.55 + localLevel * 0.65), 0, 1);
+            const base = clamp(Number(props.musicVolume) || 0.12, 0, 1);
             if (!props.voice || props.musicDucking === false) return base;
 
             const priority = String(props.voicePriority || "HIGH").toUpperCase();
