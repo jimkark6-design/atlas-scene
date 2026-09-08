@@ -80,7 +80,7 @@ export async function POST(request: Request) {
     const reviewId = String(form.get("reviewId") || "").trim();
     const video = form.get("video");
     console.log("================================");
-    console.log("ATLAS SERVER-SIDE RENDER REVIEW V10");
+    console.log("ATLAS SERVER-SIDE RENDER REVIEW V11");
     console.log("================================");
 
     const ffmpeg = await findBinary();
@@ -107,7 +107,8 @@ export async function POST(request: Request) {
 
     // Do NOT require ffprobe. The machine is known to have ffmpeg, while ffprobe
     // is not guaranteed to be installed next to ffmpeg-static on Windows.
-    // Sample one frame per second and cap the review at 18 frames.
+    // Extract at 2 fps for timeline coverage, then send only 15 evenly distributed
+    // frames to Vision. This keeps first/last coverage while cutting image-token cost.
     const pattern = path.join(framesDir, "frame-%03d.jpg");
     await execFileAsync(
       ffmpeg,
@@ -123,7 +124,7 @@ export async function POST(request: Request) {
       throw new Error("ATLAS could not extract any review frames from the rendered video.");
     }
 
-    // At 2 fps, each sampled frame represents roughly 0.5 seconds.
+    // At 2 fps, each extracted frame represents roughly 0.5 seconds.
     const duration = Math.max(0, (frameFiles.length - 1) / 2);
     console.log(`ATLAS REVIEW EXTRACTED ${frameFiles.length} frames (~${duration.toFixed(2)}s review timeline)`);
     const brief = String(form.get("creativeBrief") || "{}");
@@ -174,20 +175,32 @@ export async function POST(request: Request) {
       textBeats: timelineBeats.filter((x:any) => String(x.text || "").trim()).length,
     };
     console.log(`[ATLAS REVIEW EXECUTION] beats=${executionStats.beats} | speedRamps=${executionStats.speedRamps} | sfxEvents=${executionStats.sfxEvents} | transitions=${executionStats.transitions} | text=${executionStats.textBeats}`);
+
+    const MAX_REVIEW_FRAMES = 15;
+    const selectedFrames = frameFiles.length <= MAX_REVIEW_FRAMES
+      ? frameFiles.map((file, index) => ({ file, index }))
+      : Array.from({ length: MAX_REVIEW_FRAMES }, (_, i) => {
+          const index = Math.round(
+            (i * (frameFiles.length - 1)) / (MAX_REVIEW_FRAMES - 1),
+          );
+          return { file: frameFiles[index], index };
+        });
+
     const content: any[] = [{ type: "input_text", text: `You are ATLAS FINAL CUT REVIEWER, a ruthless senior commercial editor. This is render iteration ${iteration}. Judge the ACTUAL rendered Reel from the sampled frames, not just the plan.\n\nCREATIVE BRIEF:\n${brief}\n\nMASTER PLAN:\n${plan}\n\nDURATION: ${duration.toFixed(2)} seconds\n\nEXECUTABLE TIMELINE / FEATURE AUDIT:\n${JSON.stringify(executionStats)}\n\nQUALITY BAR:\n1) First 1.5s must stop scrolling. 2) Every shot earns its place. 3) No dead time or repeated visual idea. 4) Visual must match spoken/on-screen message. 5) Crop protects faces/products. 6) Motion is intentional, not preset-like. 7) Typography is custom, readable and safe. 8) Offer/CTA is instantly understood when relevant. 9) Audio feels like a finished commercial. 10) No watermarks or invented claims. 11) Verify that the actual render visibly/audibly reflects the executable timeline: if the plan requests SFX, ramps, transitions or text, penalize missing execution. 12) Do not reward a feature merely because it exists in JSON; judge the rendered result.\n\nPASS ONLY if >=92/100, no HIGH issues, and no obvious pacing, text or visual mismatch. Otherwise REVISE.\n\nIf REVISE, return a COMPLETE revised_shots array using ONLY existing master-plan shots. You may reorder, shorten, remove, retime within their source windows, and change crop/zoom/speed/motion/transitions/text/captions. Do not invent filenames or footage. Make concrete changes.` }];
-    for (let i = 0; i < frameFiles.length; i++) {
-      const b = await fs.readFile(path.join(framesDir, frameFiles[i]));
-      const t = (i / 2);
+    for (let i = 0; i < selectedFrames.length; i++) {
+      const { file, index } = selectedFrames[i];
+      const b = await fs.readFile(path.join(framesDir, file));
+      const t = index / 2;
       content.push({ type: "input_image", image_url: `data:image/jpeg;base64,${b.toString("base64")}` });
-      content.push({ type: "input_text", text: `Frame ${i + 1}/${frameFiles.length}: approximately ${t.toFixed(2)}s.` });
+      content.push({ type: "input_text", text: `Frame ${i + 1}/${selectedFrames.length}: approximately ${t.toFixed(2)}s.` });
     }
-    console.log(`ATLAS REVIEW SENDING ${frameFiles.length} frames to OpenAI Vision...`);
+    console.log(`ATLAS REVIEW SENDING ${selectedFrames.length}/${frameFiles.length} frames to OpenAI Vision...`);
     const review = await reviewRender(content);
     console.log(`ATLAS REVIEW AI RETURNED SCORE ${review.overall_score}/100 | root=${review.root_cause || "none"}`);
     const score = Math.max(0, Math.min(100, Number(review.overall_score) || 0));
     review.overall_score = score;
     review.verdict = score >= 92 && review.verdict === "PASS" && !(review.issues || []).some((x: any) => x.severity === "HIGH") ? "PASS" : "REVISE";
-    return NextResponse.json({ success: true, iteration, duration_seconds: duration, frame_count: frameFiles.length, execution_stats: executionStats, ...review });
+    return NextResponse.json({ success: true, iteration, duration_seconds: duration, frame_count: selectedFrames.length, extracted_frame_count: frameFiles.length, execution_stats: executionStats, ...review });
   } catch (error: any) {
     console.error("ATLAS RENDER REVIEW ERROR", error);
     return NextResponse.json({ error: error?.message || "ATLAS render review failed." }, { status: 500 });
