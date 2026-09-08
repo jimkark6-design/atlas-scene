@@ -1,0 +1,12 @@
+{
+  "runId": "7336e0b5-5f9d-43ac-ade7-5e5e1f439b56",
+  "generatedAt": "2026-09-08T14:25:45.915Z",
+  "status": "COMPLETE",
+  "reviewId": "1a0816921a7-ea2dbdee361c4256b51cf7c1371b600c",
+  "durationMs": 317205,
+  "beats": 8,
+  "files": 8,
+  "sfxEvents": 2,
+  "reviewPath": "C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\atlas-render-review-cache\\1a0816921a7-ea2dbdee361c4256b51cf7c1371b600c.mp4",
+  "timelineAuditPath": "C:\\Users\\EPIVAT~1\\AppData\\Local\\Temp\\atlas-render-review-cache\\1a0816921a7-ea2dbdee361c4256b51cf7c1371b600c.json"
+}
